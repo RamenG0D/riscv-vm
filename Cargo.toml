@@ -7,4 +7,7 @@ edition = "2021"
 crate-type = ["rlib"]
 
 [dependencies]
+bit_ops = "0.1.13"
+fern = "0.6.2"
+log = "0.4.22"
 
