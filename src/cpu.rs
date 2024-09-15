@@ -1,10 +1,10 @@
-use crate::instruction_sets::rv32i::{Instruction, InstructionDecoded};
+use crate::{instruction_sets::rv32i::{Instruction, InstructionDecoded}, virtual_memory::*};
 
 #[test]
 pub fn kernel_test() {
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::<4096, 5034209>::new();
 
-    let file = std::fs::read("").unwrap();
+    let file = std::fs::read("linux_kernel/vmlinux").unwrap();
     let mut pbytes = Vec::new();
     for bytes in file.chunks_exact(4) {
         let byte = u32::from_ne_bytes(bytes.try_into().unwrap()).to_le();
@@ -13,111 +13,24 @@ pub fn kernel_test() {
 
     cpu.load_program_raw(&pbytes).expect("Failed to load program");
 
-    // cpu.pc = 1;
+    // cpu.pc = 0x1000;
     println!("Starting CPU at 0x{:08X}", cpu.pc);
 
     println!("Debugging Memory {:#?}", &cpu.heap_memory.as_slice()[cpu.pc as usize..cpu.pc as usize + 100]);
 
     while cpu.pc < cpu.heap_memory.len() as RegisterSize {
-        cpu.execute().expect("Failed to execute inst");
+        match cpu.execute() {
+            Ok(_) => (),
+            Err(e) => eprintln!("Error: {}", e),
+        }
         cpu.pc += 1;
     }
 }
 
 pub type RegisterSize = u32;
-pub type MemorySize = u32;
-
-// used to ensure stored memory is always little endian when accessed and when modified
-pub struct Memory<const LENGTH: usize> {
-    array: [MemorySize; LENGTH],
-}
-
-impl<const L: usize> Memory<L> {
-    pub fn new() -> Self {
-        Self { array: [0; L] }
-    }
-
-    // may be needed for larger memory sizes, to avoid stack overflow
-    pub fn new_boxed() -> Box<Self> {
-        Box::new(Self { array: [0; L] })
-    }
-
-    pub fn get(&self, index: MemorySize) -> Option<MemorySize> {
-        if index < L as MemorySize {
-            Some(self.array[index as usize])
-        } else {
-            None
-        }
-    }
-
-    pub fn set(&mut self, index: MemorySize, value: MemorySize) -> Result<(), String> {
-        if index < L as MemorySize {
-            self.array[index as usize] = value.to_le();
-            Ok(())
-        } else {
-            Err(format!("Index out of bounds"))
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        L
-    }
-
-    pub fn as_slice(&self) -> &[MemorySize] {
-        &self.array
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [MemorySize] {
-        &mut self.array
-    }
-}
-
-pub struct HeapMemory<const LENGTH: usize> {
-    memory: Box<[MemorySize]>,
-    _phantom: std::marker::PhantomData<[u8; LENGTH]>,
-}
-
-impl<const L: usize> HeapMemory<L> {
-    pub fn new() -> Self {
-        Self {
-            // the memory is on the heap but never changes size
-            memory: vec![0; L].into_boxed_slice(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    pub fn get(&self, index: MemorySize) -> Option<MemorySize> {
-        if index < L as MemorySize {
-            Some(self.memory[index as usize])
-        } else {
-            None
-        }
-    }
-
-    pub fn set(&mut self, index: MemorySize, value: MemorySize) -> Result<(), String> {
-        if index < L as MemorySize {
-            self.memory[index as usize] = value.to_le();
-            Ok(())
-        } else {
-            Err(format!("Index out of bounds"))
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        L
-    }
-
-    pub fn as_slice(&self) -> &[MemorySize] {
-        &self.memory
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [MemorySize] {
-        &mut self.memory
-    }
-}
 
 // 32 bit RiscV CPU architecture
-pub struct Cpu {
+pub struct Cpu<const STACK_SIZE: usize, const HEAP_SIZE: usize> {
     // From https://riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf#page=22&zoom=auto,-95,583
     registers: [RegisterSize; 32],
 
@@ -125,13 +38,13 @@ pub struct Cpu {
     pc: RegisterSize,
 
     // little endian memory / stack array
-    stack_memory: Memory<4096>,
+    stack_memory: Memory<STACK_SIZE>,
 
     // little endian memory / heap array
-    heap_memory: HeapMemory<16777216>,
+    heap_memory: HeapMemory<HEAP_SIZE>,
 }
 
-impl Cpu {
+impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE> {
     pub const ZERO: RegisterSize = 0;
     pub const RA: RegisterSize = 1;
     pub const SP: RegisterSize = 2;
@@ -144,7 +57,7 @@ impl Cpu {
             registers: [0; 32],
             stack_memory: Memory::new(),
             heap_memory: HeapMemory::new(),
-            pc: 0,
+            pc:  0,// 0x400000,
         }
     }
 
@@ -173,14 +86,13 @@ impl Cpu {
 
     pub fn fetch(&self) -> Result<Instruction, String> {
         let inst = self.heap_memory.get(self.pc).ok_or(format!("Failed to fetch memory at addr {}", self.pc))?;
-        Ok(Instruction::from(inst))
+        Instruction::try_from(inst)
     }
 
     pub fn execute(&mut self) -> Result<(), String> {
         let inst = self.fetch()?;
-        println!("Executing instruction: 0x{:08X}", inst.to_inner());
 
-        match inst.decode() {
+        match inst.decode()? {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
@@ -282,6 +194,11 @@ impl Cpu {
             }
             InstructionDecoded::Jal { rd, imm } => {
                 self.registers[rd as usize] = self.pc;
+                // check if the imm (address) is a signed offset in multiples of 2 bytes. The offset is sign-extended and added to the pc to form the jump target address.
+                // Jumps can therefore target a ±1 MiB range. JAL stores the address of the instruction following the jump (pc+4) into register rd.
+                if imm % 2 != 0 {
+                    return Err(format!("Jump address is not a multiple of 2"));
+                }
                 self.pc = self.pc.wrapping_add(imm);
             }
             InstructionDecoded::Jalr { rd, rs1, imm } => {
@@ -293,6 +210,10 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 if rs1 == rs2 {
+                    // check if the imm (address) is 4 byte aligned
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch address is not 4 byte aligned"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
@@ -300,6 +221,9 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 if rs1 != rs2 {
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch offset is not a multiple of 4"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
@@ -307,6 +231,9 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize] as i32;
                 let rs2 = self.registers[rs2 as usize] as i32;
                 if rs1 < rs2 {
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch offset is not a multiple of 4"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
@@ -314,6 +241,9 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize] as i32;
                 let rs2 = self.registers[rs2 as usize] as i32;
                 if rs1 >= rs2 {
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch offset is not a multiple of 4"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
@@ -321,6 +251,9 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 if rs1 < rs2 {
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch offset is not a multiple of 4"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
@@ -328,49 +261,52 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 if rs1 >= rs2 {
+                    if imm % 4 != 0 {
+                        return Err(format!("Branch offset is not a multiple of 4"));
+                    }
                     self.pc = self.pc.wrapping_add(imm);
                 }
             }
             InstructionDecoded::Lb { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte as i8 as i32 as u32;
             }
             InstructionDecoded::Lh { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte as i16 as i32 as u32;
             }
             InstructionDecoded::Lw { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte;
             }
             InstructionDecoded::Ld { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte;
             }
             InstructionDecoded::Lbu { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte & 0xFF;
             }
             InstructionDecoded::Lhu { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte & 0xFFFF;
             }
             InstructionDecoded::Lwu { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let addr = rs1.wrapping_add(imm);
-                let byte = self.heap_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
+                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
                 self.registers[rd as usize] = byte;
             }
             InstructionDecoded::Sb { rs1, rs2, imm } => {
@@ -383,19 +319,19 @@ impl Cpu {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 let addr = rs1.wrapping_add(imm);
-                self.heap_memory.set(addr, rs2)?;
+                self.stack_memory.set(addr, rs2)?;
             }
             InstructionDecoded::Sw { rs1, rs2, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 let addr = rs1.wrapping_add(imm);
-                self.heap_memory.set(addr, rs2)?;
+                self.stack_memory.set(addr, rs2)?;
             }
             InstructionDecoded::Sd { rs1, rs2, imm } => {
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 let addr = rs1.wrapping_add(imm);
-                self.heap_memory.set(addr, rs2)?;
+                self.stack_memory.set(addr, rs2)?;
             }
             InstructionDecoded::ECall => { println!("ECALL"); }
             InstructionDecoded::EBreak => { println!("EBREAK"); }

@@ -1,12 +1,13 @@
 
 pub mod instruction_sets;
+pub mod virtual_memory;
 pub mod cpu;
 
 #[test]
 pub fn run_cpu() {
     use cpu::Cpu;
     use instruction_sets::rv32i::instructions::*;
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::<4096, 8192>::new();
     let inst = ADDI.encode(|b| b.rd(1).rs1(1).imm1(30));
     println!("ADDI: 0x{:08X}", inst.to_inner());
     cpu.load_program(&[inst]).expect("Failed to load program");
