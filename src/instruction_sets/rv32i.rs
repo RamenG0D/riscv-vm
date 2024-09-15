@@ -460,17 +460,18 @@ impl TryFrom<InstructionSize> for Instruction {
 impl TryFrom<InstructionSize> for InstructionFormat {
     type Error = String;
     fn try_from(value: InstructionSize) -> Result<Self, Self::Error> {
-        match value {
-            _ if (value & instructions::ARITMETIC_IMMEDIATE_MATCH) == instructions::ARITMETIC_IMMEDIATE_MATCH => Ok(Self::IType),
-            _ if (value & instructions::ARITMETIC_REGISTER_MATCH) == instructions::ARITMETIC_REGISTER_MATCH => Ok(Self::RType),
-            _ if (value & instructions::LOAD_MATCH) == instructions::LOAD_MATCH => Ok(Self::IType),
-            _ if (value & instructions::STORE_MATCH) == instructions::STORE_MATCH => Ok(Self::SType),
-            _ if (value & instructions::AUIPC_MATCH) == instructions::AUIPC_MATCH => Ok(Self::UType),
-            _ if (value & instructions::LUI_MATCH) == instructions::LUI_MATCH => Ok(Self::UType),
-            _ if (value & instructions::BRANCH_MATCH) == instructions::BRANCH_MATCH => Ok(Self::SBType),
-            _ if (value & instructions::CSR_MATCH) == instructions::CSR_MATCH => Ok(Self::IType),
-
-            _ => Err(format!("Cannot Find instruction format based on instruction {{\n\tdec: {value}\n\thex: 0x{value:X}\n\tbin: 0b{value:032b}\n}}"))
+        match value & OPCODE_MASK {
+            instructions::ARITMETIC_IMMEDIATE_MATCH => Ok(InstructionFormat::IType),
+            instructions::ARITMETIC_REGISTER_MATCH => Ok(InstructionFormat::RType),
+            instructions::STORE_MATCH => Ok(InstructionFormat::SType),
+            instructions::LUI_MATCH => Ok(InstructionFormat::UType),
+            instructions::AUIPC_MATCH => Ok(InstructionFormat::UType),
+            instructions::LOAD_MATCH => Ok(InstructionFormat::IType),
+            instructions::FENCE_MATCH => Ok(InstructionFormat::IType),
+            instructions::BRANCH_MATCH => Ok(InstructionFormat::SBType),
+            instructions::JUMP_MATCH => Ok(InstructionFormat::UJType),
+            instructions::CSR_MATCH => Ok(InstructionFormat::IType),
+            v => Err(format!("Unknown InstructionFormat for opcode {:#X} (value = {:#X})", v, value)),
         }
     }
 }
@@ -738,19 +739,19 @@ fn write_value_into_x1() {
 
 #[test]
 fn add_instruction() {
-    let instruction = Instruction::try_from(0x80B3 /* add x1 x1 x0 */).unwrap();
+    let instruction = Instruction::try_from(0x00208233 /* add x4 x1 x2 */).unwrap();
     match instruction.format {
         InstructionFormat::RType => (),
-        _ => panic!("Instruction SHOULD BE AN RTYPE!"),
+        _ => panic!("Instruction SHOULD BE AN RTYPE!\nInstead got {:?}", instruction.format),
     }
     for i in instruction.to_string().lines() {
         println!("{i}");
     }
     assert_eq!(instruction.opcode(), 51);
-    assert_eq!(instruction.rd().unwrap(), 1);
+    assert_eq!(instruction.rd().unwrap(), 4);
     assert_eq!(instruction.funct3().unwrap(), 0);
     assert_eq!(instruction.rs1().unwrap(), 1);
-    assert_eq!(instruction.rs2().unwrap(), 0);
+    assert_eq!(instruction.rs2().unwrap(), 2);
 }
 
 pub const OPCODE_MASK: InstructionSize = self::internal::create_mask(7);
@@ -773,12 +774,12 @@ pub mod rtype {
         println!("RS1_MASK    = {:#032b}", RS1_MASK);
         println!("RS2_MASK    = {:#032b}", RS2_MASK);
         println!("FUNCT7_MASK = {:#032b}", FUNCT7_MASK);
-        assert!(OPCODE_MASK == 0b00000000000000000000000001111111);
-        assert!(RD_MASK == 0b00000000000000000000111110000000);
-        assert!(FUNCT3_MASK == 0b00000000000000000111000000000000);
-        assert!(RS1_MASK == 0b00000000000011111000000000000000);
-        assert!(RS2_MASK == 0b00000001111100000000000000000000);
-        assert!(FUNCT7_MASK == 0b11111110000000000000000000000000);
+        assert_eq!(OPCODE_MASK,   0b00000000000000000000000001111111);
+        assert_eq!(RD_MASK,       0b00000000000000000000111110000000);
+        assert_eq!(FUNCT3_MASK,   0b00000000000000000111000000000000);
+        assert_eq!(RS1_MASK,      0b00000000000011111000000000000000);
+        assert_eq!(RS2_MASK,      0b00000001111100000000000000000000);
+        assert_eq!(FUNCT7_MASK,   0b11111110000000000000000000000000);
     }
 }
 
@@ -798,11 +799,11 @@ pub mod itype {
         println!("FUNCT3_MASK = {:#034b}", FUNCT3_MASK);
         println!("RS1_MASK    = {:#034b}", RS1_MASK);
         println!("IMM1        = {:#034b}", IMM1);
-        assert!(OPCODE_MASK == 0b00000000000000000000000001111111);
-        assert!(RD_MASK == 0b00000000000000000000111110000000);
-        assert!(FUNCT3_MASK == 0b00000000000000000111000000000000);
-        assert!(RS1_MASK == 0b00000000000011111000000000000000);
-        assert!(IMM1 == 0b11111111111100000000000000000000);
+        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
+        assert_eq!(RD_MASK,     0b00000000000000000000111110000000);
+        assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
+        assert_eq!(RS1_MASK,    0b00000000000011111000000000000000);
+        assert_eq!(IMM1,        0b11111111111100000000000000000000);
     }
 }
 
@@ -825,11 +826,11 @@ pub mod stype {
         println!("RS2_MASK    = {:#034b}", RS2_MASK);
         println!("IMM2        = {:#034b}", IMM2);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(IMM1, 0b00000000000000000000111110000000);
+        assert_eq!(IMM1,        0b00000000000000000000111110000000);
         assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
-        assert_eq!(RS1_MASK, 0b00000000000011111000000000000000);
-        assert_eq!(RS2_MASK, 0b00000001111100000000000000000000);
-        assert_eq!(IMM2, 0b11111110000000000000000000000000);
+        assert_eq!(RS1_MASK,    0b00000000000011111000000000000000);
+        assert_eq!(RS2_MASK,    0b00000001111100000000000000000000);
+        assert_eq!(IMM2,        0b11111110000000000000000000000000);
     }
 }
 
@@ -846,7 +847,7 @@ pub mod utype {
         println!("RD_MASK     = {:#032b}", RD_MASK);
         println!("IMM1        = {:#032b}", IMM1);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
-        assert_eq!(IMM1, 0b11111111111111111111000000000000);
+        assert_eq!(RD_MASK,     0b00000000000000000000111110000000);
+        assert_eq!(IMM1,        0b11111111111111111111000000000000);
     }
 }

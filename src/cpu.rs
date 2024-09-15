@@ -4,7 +4,7 @@ use crate::instruction_sets::rv32i::{Instruction, InstructionDecoded};
 pub fn kernel_test() {
     let mut cpu = Cpu::new();
 
-    let file = std::fs::read("test.bin").unwrap();
+    let file = std::fs::read("").unwrap();
     let mut pbytes = Vec::new();
     for bytes in file.chunks_exact(4) {
         let byte = u32::from_ne_bytes(bytes.try_into().unwrap()).to_le();
@@ -126,6 +126,7 @@ pub struct Cpu {
 
     // little endian memory / stack array
     stack_memory: Memory<4096>,
+
     // little endian memory / heap array
     heap_memory: HeapMemory<16777216>,
 }
@@ -396,40 +397,13 @@ impl Cpu {
                 let addr = rs1.wrapping_add(imm);
                 self.heap_memory.set(addr, rs2)?;
             }
-            InstructionDecoded::ECall => {
-                println!("ECALL");
-            }
-            InstructionDecoded::EBreak => {
-                println!("EBREAK");
-            }
-            InstructionDecoded::CsrRw { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let csr = self.registers[imm as usize];
-                self.registers[rd as usize] = csr;
-                self.registers[csr as usize] = rs1;
-            }
-            InstructionDecoded::CsrRs { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let csr = self.registers[imm as usize];
-                self.registers[rd as usize] = csr;
-                self.registers[csr as usize] |= rs1;
-            }
-            InstructionDecoded::CsrRc { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let csr = self.registers[imm as usize];
-                self.registers[rd as usize] = imm;
-                self.registers[csr as usize] &= !rs1;
-            }
-            InstructionDecoded::CsrRwi { rd, rs1, imm } => {
-                let csr = self.registers[imm as usize];
-                self.registers[rd as usize] = csr;
-                self.registers[csr as usize] = rs1;
-            }
-            InstructionDecoded::CsrRsi { rd, rs1, imm } => {
-                let csr = self.registers[imm as usize];
-                self.registers[rd as usize] = csr;
-                self.registers[csr as usize] |= rs1;
-            }
+            InstructionDecoded::ECall => { println!("ECALL"); }
+            InstructionDecoded::EBreak => { println!("EBREAK"); }
+            InstructionDecoded::CsrRw { .. } => todo!(),
+            InstructionDecoded::CsrRs { .. } => todo!(),
+            InstructionDecoded::CsrRc { .. } => todo!(),
+            InstructionDecoded::CsrRwi { .. } => todo!(),
+            InstructionDecoded::CsrRsi { .. } => todo!(),
             InstructionDecoded::Slti { rd, rs1, imm } => {
                 let rs1 = self.registers[rs1 as usize] as i32;
                 self.registers[rd as usize] = if rs1 < imm as i32 { 1 } else { 0 };
@@ -448,12 +422,8 @@ impl Cpu {
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
             }
-            InstructionDecoded::Fence { pred, succ } => {
-                println!("FENCE pred: {:#010x} succ: {:#010x}", pred, succ);
-            }
-            InstructionDecoded::FenceI { pred, succ } => {
-                println!("FENCE.I pred: {:#010x} succ: {:#010x}", pred, succ);
-            }
+            InstructionDecoded::Fence  { .. } => todo!(),
+            InstructionDecoded::FenceI { .. } => todo!(),
         }
 
         Ok(())
