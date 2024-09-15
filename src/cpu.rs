@@ -2,28 +2,25 @@ use crate::instruction_sets::rv32i::{Instruction, InstructionDecoded};
 
 #[test]
 pub fn kernel_test() {
-    use std::io::Read;
     let mut cpu = Cpu::new();
 
-    let mut file = std::fs::File::open("Image").unwrap();
-
-    let mut fbytes = Vec::new();
-    let _ = file.read_to_end(&mut fbytes).unwrap();
-
+    let file = std::fs::read("test.bin").unwrap();
     let mut pbytes = Vec::new();
-    for byte in fbytes.chunks_exact(4) {
-        let byte = byte.iter().map(|b| b.to_le()).collect::<Vec<u8>>();
-        let byte = u32::from_le_bytes(byte.try_into().unwrap());
+    for bytes in file.chunks_exact(4) {
+        let byte = u32::from_ne_bytes(bytes.try_into().unwrap()).to_le();
         pbytes.push(byte);
     }
 
-    cpu.load_program_raw(&pbytes).unwrap();
+    cpu.load_program_raw(&pbytes).expect("Failed to load program");
 
-    let mut regs_changed = false;
-    while cpu.pc < cpu.heap_memory.len() as RegisterSize && !regs_changed {
+    // cpu.pc = 1;
+    println!("Starting CPU at 0x{:08X}", cpu.pc);
+
+    println!("Debugging Memory {:#?}", &cpu.heap_memory.as_slice()[cpu.pc as usize..cpu.pc as usize + 100]);
+
+    while cpu.pc < cpu.heap_memory.len() as RegisterSize {
         cpu.execute().expect("Failed to execute inst");
         cpu.pc += 1;
-        regs_changed = cpu.registers.iter().any(|&r| r != 0);
     }
 }
 

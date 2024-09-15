@@ -390,7 +390,7 @@ impl Instruction {
                         instructions::ebreak::FUNCT7 => InstructionDecoded::EBreak,
                         _ => panic!("Unknown funct3 value for IType instruction"),
                     },
-                    _ => panic!("Unknown opcode for IType instruction"),
+                    op => panic!("Unknown opcode for IType instruction {op}"),
                 }
             }
             InstructionFormat::RType => {
