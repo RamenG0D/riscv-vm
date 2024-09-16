@@ -1,6 +1,7 @@
 
 pub mod instruction_sets;
 pub mod virtual_memory;
+pub mod csr;
 pub mod cpu;
 
 #[test]
