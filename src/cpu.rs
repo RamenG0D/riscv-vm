@@ -239,13 +239,60 @@ impl Cpu {
 
                 self.pc = self.pc.wrapping_add(imm);
             }
-            InstructionDecoded::Jalr { .. } => todo!(),
-            InstructionDecoded::Beq { .. } => todo!(),
-            InstructionDecoded::Bne { .. } => todo!(),
-            InstructionDecoded::Blt { .. } => todo!(),
-            InstructionDecoded::Bge { .. } => todo!(),
-            InstructionDecoded::Bltu { .. } => todo!(),
-            InstructionDecoded::Bgeu { .. } => todo!(),
+            InstructionDecoded::Jalr { rd, rs1, imm } => {
+                debug!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                self.registers[rd as usize] = self.pc;
+                self.pc = rs1.wrapping_add(imm);
+            }
+            InstructionDecoded::Beq { rs1, rs2, imm } => {
+                debug!("BEQ: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 == rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bne { rs1, rs2, imm } => {
+                debug!("BNE: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 != rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Blt { rs1, rs2, imm } => {
+                debug!("BLT: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize] as i32;
+                let rs2 = self.registers[rs2 as usize] as i32;
+                if rs1 < rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bge { rs1, rs2, imm } => {
+                debug!("BGE: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize] as i32;
+                let rs2 = self.registers[rs2 as usize] as i32;
+                if rs1 >= rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bltu { rs1, rs2, imm } => {
+                debug!("BLTU: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 < rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bgeu { rs1, rs2, imm } => {
+                debug!("BGEU: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 >= rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
             InstructionDecoded::Lb { rd, rs1, imm } => {
                 debug!("LB: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let addr = self.registers[rs1 as usize].wrapping_add(imm);
