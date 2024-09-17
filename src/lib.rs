@@ -1,6 +1,9 @@
-
-pub mod instruction_sets;
+pub mod logging;
+pub mod bus;
 pub mod cpu;
+pub mod csr;
+pub mod instruction_sets;
+pub mod memory;
 
 #[test]
 pub fn run_cpu() {

@@ -3,11 +3,15 @@ name = "riscv-vm"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "test_prog"
+
 [lib]
 crate-type = ["rlib"]
 
 [dependencies]
 bit_ops = "0.1.13"
+chrono = "0.4.38"
 fern = "0.6.2"
 log = "0.4.22"
 
