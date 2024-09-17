@@ -11,8 +11,27 @@ use crate::{
 };
 
 #[test]
-pub fn kernel_test() {
-    //
+pub fn fib_test() {
+    let mut cpu = Cpu::new();
+
+    println!("Loading program...");
+    cpu.load_program_raw(include_bytes!("../c_test/fib.bin"))
+        .expect("Failed to load program");
+    println!("Program LOADED");
+
+    while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
+        match cpu.execute() {
+            Ok(_) => {
+                println!("{}", cpu.to_string());
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+            }
+        }
+        cpu.pc += 4;
+    }
+
+    println!("{}", cpu.to_string());
 }
 
 #[test]
