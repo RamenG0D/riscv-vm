@@ -1,5 +1,4 @@
 
 int main(void) {
-    *(char*)0x80000000 = 10;
-    return 31;
+    return 31 /* 0x1F */;
 }

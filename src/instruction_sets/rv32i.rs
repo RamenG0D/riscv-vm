@@ -60,7 +60,7 @@ pub enum InstructionFormat {
 
     // TODO: NOT FINISHED
     SBType,
-    UJType,
+    JType,
 }
 
 pub enum InstructionDecoded {
@@ -476,14 +476,14 @@ impl Instruction {
                     _ => Err(format!("Unknown opcode for SBType instruction")),
                 }
             }
-            InstructionFormat::UJType => {
+            InstructionFormat::JType => {
                 let rd = self.rd().unwrap();
                 let imm1 = self.immediate1().unwrap();
                 let imm2 = self.immediate2().unwrap();
                 let imm3 = self.immediate3().unwrap();
                 match self.opcode() {
                     instructions::JUMP_MATCH => Ok(InstructionDecoded::Jal { rd, imm1, imm2, imm3 }),
-                    _ => Err(format!("Unknown opcode for UJType instruction")),
+                    _ => Err(format!("Unknown opcode for JType instruction")),
                 }
             }
         }
@@ -510,7 +510,7 @@ impl TryFrom<InstructionSize> for InstructionFormat {
             instructions::LOAD_MATCH => Ok(InstructionFormat::IType),
             instructions::FENCE_MATCH => Ok(InstructionFormat::IType),
             instructions::BRANCH_MATCH => Ok(InstructionFormat::SBType),
-            instructions::JUMP_MATCH => Ok(InstructionFormat::UJType),
+            instructions::JUMP_MATCH => Ok(InstructionFormat::JType),
             instructions::CSR_MATCH => Ok(InstructionFormat::IType),
             v => Err(format!(
                 "Unknown InstructionFormat for opcode {:#X} (value = {:#X})",
@@ -655,7 +655,7 @@ pub mod instructions {
     instruction!(bltu => BLTU(BRANCH_MATCH, 6, 0)[InstructionFormat::SBType]);
     instruction!(bgeu => BGEU(BRANCH_MATCH, 7, 0)[InstructionFormat::SBType]);
     instruction!(jalr => JALR(JUMP_MATCH, 0, 0)[InstructionFormat::IType]);
-    instruction!(jal => JAL(JUMP_MATCH, 0, 0)[InstructionFormat::UJType]);
+    instruction!(jal => JAL(JUMP_MATCH, 0, 0)[InstructionFormat::JType]);
     instruction!(ecall => ECALL(CSR_MATCH, 0, 0)[InstructionFormat::IType]);
     instruction!(ebreak => EBREAK(CSR_MATCH, 0, 1)[InstructionFormat::IType]);
     instruction!(csrrw => CSRRW(CSR_MATCH, 1, 0)[InstructionFormat::IType]);
@@ -687,7 +687,7 @@ impl Instruction {
             InstructionFormat::RType => Some((self.inst & rtype::RD_MASK) >> 7),
             InstructionFormat::IType => Some((self.inst & itype::RD_MASK) >> 7),
             InstructionFormat::UType => Some((self.inst & utype::RD_MASK) >> 7),
-            InstructionFormat::UJType => Some((self.inst & ujtype::RD_MASK) >> 7),
+            InstructionFormat::JType => Some((self.inst & jtype::RD_MASK) >> 7),
             _ => None,
         }
     }
@@ -733,7 +733,7 @@ impl Instruction {
             InstructionFormat::IType =>  Some(((self.inst as i32 & itype::IMM1 as i32)  >> 20) as InstructionSize),
             InstructionFormat::SType =>  Some(((self.inst as i32 & stype::IMM1 as i32)  >> 7) as InstructionSize),
             InstructionFormat::UType =>  Some(((self.inst as i32 & utype::IMM1 as i32)  >> 12) as InstructionSize),
-            InstructionFormat::UJType => Some(((self.inst as i32 & ujtype::IMM1 as i32) >> 12) as InstructionSize),
+            InstructionFormat::JType => Some(((self.inst as i32 & jtype::IMM1 as i32) >> 12) as InstructionSize),
             InstructionFormat::SBType => Some(((self.inst as i32 & btype::IMM1 as i32) >> 7) as InstructionSize),
             _ => None,
         }
@@ -743,14 +743,14 @@ impl Instruction {
         match self.format {
             InstructionFormat::SType => Some((self.inst & stype::IMM2) >> 25),
             InstructionFormat::SBType => Some((self.inst & btype::IMM2) >> 25),
-            InstructionFormat::UJType => Some((self.inst & ujtype::IMM2) >> 20),
+            InstructionFormat::JType => Some((self.inst & jtype::IMM2) >> 20),
             _ => None,
         }
     }
 
     pub fn immediate3(&self) -> Option<InstructionSize> {
         match self.format {
-            InstructionFormat::UJType => Some((self.inst & ujtype::IMM3) >> 21),
+            InstructionFormat::JType => Some((self.inst & jtype::IMM3) >> 21),
             _ => None,
         }
     }
@@ -841,12 +841,12 @@ pub mod rtype {
     #[test]
     pub fn bit_masks() {
         use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = {:#032b}", OPCODE_MASK);
-        println!("RD_MASK     = {:#032b}", RD_MASK);
-        println!("FUNCT3_MASK = {:#032b}", FUNCT3_MASK);
-        println!("RS1_MASK    = {:#032b}", RS1_MASK);
-        println!("RS2_MASK    = {:#032b}", RS2_MASK);
-        println!("FUNCT7_MASK = {:#032b}", FUNCT7_MASK);
+        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
+        println!("RD_MASK     = 0b{:032b}", RD_MASK);
+        println!("FUNCT3_MASK = 0b{:032b}", FUNCT3_MASK);
+        println!("RS1_MASK    = 0b{:032b}", RS1_MASK);
+        println!("RS2_MASK    = 0b{:032b}", RS2_MASK);
+        println!("FUNCT7_MASK = 0b{:032b}", FUNCT7_MASK);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
         assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
         assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
@@ -867,11 +867,11 @@ pub mod itype {
     #[test]
     pub fn bit_masks() {
         use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = {:#034b}", OPCODE_MASK);
-        println!("RD_MASK     = {:#034b}", RD_MASK);
-        println!("FUNCT3_MASK = {:#034b}", FUNCT3_MASK);
-        println!("RS1_MASK    = {:#034b}", RS1_MASK);
-        println!("IMM1        = {:#034b}", IMM1);
+        println!("OPCODE_MASK = 0b{:034b}", OPCODE_MASK);
+        println!("RD_MASK     = 0b{:034b}", RD_MASK);
+        println!("FUNCT3_MASK = 0b{:034b}", FUNCT3_MASK);
+        println!("RS1_MASK    = 0b{:034b}", RS1_MASK);
+        println!("IMM1        = 0b{:034b}", IMM1);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
         assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
         assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
@@ -892,12 +892,12 @@ pub mod stype {
     #[test]
     pub fn bit_masks() {
         use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = {:#034b}", OPCODE_MASK);
-        println!("IMM1        = {:#034b}", IMM1);
-        println!("FUNCT3_MASK = {:#034b}", FUNCT3_MASK);
-        println!("RS1_MASK    = {:#034b}", RS1_MASK);
-        println!("RS2_MASK    = {:#034b}", RS2_MASK);
-        println!("IMM2        = {:#034b}", IMM2);
+        println!("OPCODE_MASK = 0b{:034b}", OPCODE_MASK);
+        println!("IMM1        = 0b{:034b}", IMM1);
+        println!("FUNCT3_MASK = 0b{:034b}", FUNCT3_MASK);
+        println!("RS1_MASK    = 0b{:034b}", RS1_MASK);
+        println!("RS2_MASK    = 0b{:034b}", RS2_MASK);
+        println!("IMM2        = 0b{:034b}", IMM2);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
         assert_eq!(IMM1, 0b00000000000000000000111110000000);
         assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
@@ -916,9 +916,9 @@ pub mod utype {
     #[test]
     pub fn bit_masks() {
         use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = {:#032b}", OPCODE_MASK);
-        println!("RD_MASK     = {:#032b}", RD_MASK);
-        println!("IMM1        = {:#032b}", IMM1);
+        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
+        println!("RD_MASK     = 0b{:032b}", RD_MASK);
+        println!("IMM1        = 0b{:032b}", IMM1);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
         assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
         assert_eq!(IMM1, 0b11111111111111111111000000000000);
@@ -966,26 +966,28 @@ pub mod btype {
     }
 }
 
-pub mod ujtype {
+pub mod jtype {
     use super::InstructionSize;
 
     pub const RD_MASK: InstructionSize = super::internal::create_mask(5) << 7;
     pub const IMM1: InstructionSize = super::internal::create_mask(8) << 12;
     pub const IMM2: InstructionSize = super::internal::create_mask(1) << 20;
     pub const IMM3: InstructionSize = super::internal::create_mask(10) << 21;
+    pub const IMM4: InstructionSize = super::internal::create_mask(1) << 31;
 
     #[test]
     pub fn bit_masks() {
         use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = {:#032b}", OPCODE_MASK);
-        println!("RD_MASK     = {:#032b}", RD_MASK);
-        println!("IMM1        = {:#032b}", IMM1);
-        println!("IMM2        = {:#032b}", IMM2);
-        println!("IMM3        = {:#032b}", IMM3);
+        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
+        println!("RD_MASK     = 0b{:032b}", RD_MASK);
+        println!("IMM1        = 0b{:032b}", IMM1);
+        println!("IMM2        = 0b{:032b}", IMM2);
+        println!("IMM3        = 0b{:032b}", IMM3);
         assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
         assert_eq!(RD_MASK,     0b00000000000000000000111110000000);
-        assert_eq!(IMM1,        0b00000000000000001111111100000000);
-        assert_eq!(IMM2,        0b00000000001111110000000000000000);
-        assert_eq!(IMM3,        0b11111111110000000000000000000000);
+        assert_eq!(IMM1,        0b00000000000011111111000000000000);
+        assert_eq!(IMM2,        0b00000000000100000000000000000000);
+        assert_eq!(IMM3,        0b01111111111000000000000000000000);
+        assert_eq!(IMM4,        0b10000000000000000000000000000000)
     }
 }
