@@ -94,14 +94,6 @@ pub enum InstructionDecoded {
         rs1: InstructionSize,
         imm: InstructionSize,
     },
-    Fence {
-        pred: InstructionSize,
-        succ: InstructionSize,
-    },
-    FenceI {
-        pred: InstructionSize,
-        succ: InstructionSize,
-    },
     Addi {
         rd: InstructionSize,
         rs1: InstructionSize,
@@ -288,6 +280,48 @@ pub enum InstructionDecoded {
         rs1: InstructionSize,
         imm: InstructionSize,
     },
+
+    // M Extension
+    Mul {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Mulh {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Mulsu {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Mulu {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Div {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Divu {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Rem {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
+    Remu {
+        rd: InstructionSize,
+        rs1: InstructionSize,
+        rs2: InstructionSize,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -406,25 +440,30 @@ impl Instruction {
                 let rs2 = self.rs2().unwrap();
                 match self.opcode() {
                     instructions::ARITMETIC_REGISTER_MATCH => {
-                        match self.funct3().ok_or("could not get funct3")? {
-                        instructions::add::FUNCT3 => match self.funct7().ok_or("couldnt get funct7")? {
-                            instructions::add::FUNCT7 => Ok(InstructionDecoded::Add { rd, rs1, rs2 }),
-                            instructions::sub::FUNCT7 => Ok(InstructionDecoded::Sub { rd, rs1, rs2 }),
-                            _ => Err(format!("Unknown funct7 value for RType instruction")),
-                        },
-                        instructions::sll::FUNCT3 =>  Ok(InstructionDecoded::Sll { rd, rs1, rs2 }),
-                        instructions::slt::FUNCT3 =>  Ok(InstructionDecoded::Slt { rd, rs1, rs2 }),
-                        instructions::sltu::FUNCT3 => Ok(InstructionDecoded::Sltu { rd, rs1, rs2 }),
-                        instructions::xor::FUNCT3 =>  Ok(InstructionDecoded::Xor { rd, rs1, rs2 }),
-                        instructions::srl::FUNCT3 /* both have the same funct3 so instructions::sra::FUNCT3 isnt needed */ => match self.funct7().ok_or("couldnt get funct7")? {
-                            instructions::srl::FUNCT7 => Ok(InstructionDecoded::Srl { rd, rs1, rs2 }),
-                            instructions::sra::FUNCT7 => Ok(InstructionDecoded::Sra { rd, rs1, rs2 }),
-                            _ => Err(format!("Unknown funct7 value for RType instruction")),
-                        },
-                        instructions::or::FUNCT3 =>  Ok(InstructionDecoded::Or { rd, rs1, rs2 }),
-                        instructions::and::FUNCT3 => Ok(InstructionDecoded::And { rd, rs1, rs2 }),
-                        _ => Err(format!("Unknown funct3 value for RType instruction")),
-                    }
+                        let (f3, f7) = (self.funct3().ok_or("could not get funct3")?, self.funct7().ok_or("could not get funct7")?);
+                        match (f3, f7) {
+                            (instructions::add::FUNCT3, instructions::add::FUNCT7) => Ok(InstructionDecoded::Add { rd, rs1, rs2 }),
+                            (instructions::sub::FUNCT3, instructions::sub::FUNCT7) => Ok(InstructionDecoded::Sub { rd, rs1, rs2 }),
+                            (instructions::sll::FUNCT3, 0) =>  Ok(InstructionDecoded::Sll { rd, rs1, rs2 }),
+                            (instructions::slt::FUNCT3, 0) =>  Ok(InstructionDecoded::Slt { rd, rs1, rs2 }),
+                            (instructions::sltu::FUNCT3, 0) => Ok(InstructionDecoded::Sltu { rd, rs1, rs2 }),
+                            (instructions::xor::FUNCT3, 0) =>  Ok(InstructionDecoded::Xor { rd, rs1, rs2 }),
+                            (instructions::srl::FUNCT3, instructions::srl::FUNCT7) => Ok(InstructionDecoded::Srl { rd, rs1, rs2 }),
+                            (instructions::sra::FUNCT3, instructions::sra::FUNCT7) => Ok(InstructionDecoded::Sra { rd, rs1, rs2 }),
+                            (instructions::or::FUNCT3, 0) =>  Ok(InstructionDecoded::Or { rd, rs1, rs2 }),
+                            (instructions::and::FUNCT3, 0) => Ok(InstructionDecoded::And { rd, rs1, rs2 }),
+
+                            (instructions::mul::FUNCT3, instructions::mul::FUNCT7) => Ok(InstructionDecoded::Mul { rd, rs1, rs2 }),
+                            (instructions::mulh::FUNCT3, instructions::mulh::FUNCT7) => Ok(InstructionDecoded::Mulh { rd, rs1, rs2 }),
+                            (instructions::mulsu::FUNCT3, instructions::mulsu::FUNCT7) => Ok(InstructionDecoded::Mulsu { rd, rs1, rs2 }),
+                            (instructions::mulu::FUNCT3, instructions::mulu::FUNCT7) => Ok(InstructionDecoded::Mulu { rd, rs1, rs2 }),
+                            (instructions::div::FUNCT3, instructions::div::FUNCT7) => Ok(InstructionDecoded::Div { rd, rs1, rs2 }),
+                            (instructions::divu::FUNCT3, instructions::divu::FUNCT7) => Ok(InstructionDecoded::Divu { rd, rs1, rs2 }),
+                            (instructions::rem::FUNCT3, instructions::rem::FUNCT7) => Ok(InstructionDecoded::Rem { rd, rs1, rs2 }),
+                            (instructions::remu::FUNCT3, instructions::remu::FUNCT7) => Ok(InstructionDecoded::Remu { rd, rs1, rs2 }),
+
+                            _ => Err(format!("Unknown funct3 value for RType instruction")),
+                        }
                     }
                     _ => Err(format!("Unknown opcode for RType instruction")),
                 }
@@ -663,6 +702,16 @@ pub mod instructions {
     instruction!(csrrc => CSRRC(CSR_MATCH, 3, 0)[InstructionFormat::IType]);
     instruction!(csrrwi => CSRRWI(CSR_MATCH, 4, 0)[InstructionFormat::IType]);
     instruction!(csrrsi => CSRRSI(CSR_MATCH, 5, 0)[InstructionFormat::IType]);
+
+    // M Extension
+    instruction!(mul => MUL(ARITMETIC_REGISTER_MATCH, 0, 1)[InstructionFormat::RType]);
+    instruction!(mulh => MULH(ARITMETIC_REGISTER_MATCH, 1, 1)[InstructionFormat::RType]);
+    instruction!(mulsu => MULSU(ARITMETIC_REGISTER_MATCH, 2, 1)[InstructionFormat::RType]);
+    instruction!(mulu => MULU(ARITMETIC_REGISTER_MATCH, 3, 1)[InstructionFormat::RType]);
+    instruction!(div => DIV(ARITMETIC_REGISTER_MATCH, 4, 1)[InstructionFormat::RType]);
+    instruction!(divu => DIVU(ARITMETIC_REGISTER_MATCH, 5, 1)[InstructionFormat::RType]);
+    instruction!(rem => REM(ARITMETIC_REGISTER_MATCH, 6, 1)[InstructionFormat::RType]);
+    instruction!(remu => REMU(ARITMETIC_REGISTER_MATCH, 7, 1)[InstructionFormat::RType]);
 }
 
 impl Instruction {

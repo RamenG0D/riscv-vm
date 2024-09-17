@@ -6,7 +6,7 @@ pub mod instruction_sets;
 pub mod memory;
 
 #[test]
-pub fn run_cpu() {
+fn run_cpu() {
     use cpu::Cpu;
     use instruction_sets::rv32i::instructions::*;
     let mut cpu = Cpu::new();

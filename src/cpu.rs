@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, info};
 
 use crate::{
     bus::Bus,
@@ -10,10 +10,29 @@ use crate::{
     },
 };
 
-#[test]
-pub fn kernel_test() {
-    //
-}
+// #[test]
+// pub fn fib_test() {
+//     let mut cpu = Cpu::new();
+
+//     println!("Loading program...");
+//     cpu.load_program_raw(include_bytes!("../c_test/fib.bin"))
+//         .expect("Failed to load program");
+//     println!("Program LOADED");
+
+//     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
+//         match cpu.execute() {
+//             Ok(_) => {
+//                 println!("{}", cpu.to_string());
+//             }
+//             Err(e) => {
+//                 eprintln!("Error: {e}");
+//             }
+//         }
+//         cpu.pc += 4;
+//     }
+
+//     println!("{}", cpu.to_string());
+// }
 
 #[test]
 pub fn program_test() {
@@ -28,7 +47,10 @@ pub fn program_test() {
     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
         match cpu.execute() {
             Ok(_) => (),
-            Err(_) => (), // eprintln!("Error: {e}"),
+            Err(e) => {
+                log::error!("Error: {e}");
+                break;
+            }
         }
         cpu.pc += 4;
     }
@@ -66,16 +88,19 @@ impl Cpu {
     pub const PC: RegisterSize = 32;
 
     pub fn new() -> Self {
+        info!("Initializing CPU...");
         let mut registers = [0; 32];
         registers[2] = (DRAM_BASE + DRAM_SIZE) as RegisterSize;
-        Self {
+        let cpu = Self {
             registers,
             pc: DRAM_BASE as RegisterSize,
 
             bus: Bus::new(),
 
             state: State::new(),
-        }
+        };
+        info!("CPU initialized");
+        cpu
     }
 
     pub fn get_pc(&self) -> RegisterSize {
@@ -222,13 +247,60 @@ impl Cpu {
 
                 self.pc = self.pc.wrapping_add(imm);
             }
-            InstructionDecoded::Jalr { .. } => todo!(),
-            InstructionDecoded::Beq { .. } => todo!(),
-            InstructionDecoded::Bne { .. } => todo!(),
-            InstructionDecoded::Blt { .. } => todo!(),
-            InstructionDecoded::Bge { .. } => todo!(),
-            InstructionDecoded::Bltu { .. } => todo!(),
-            InstructionDecoded::Bgeu { .. } => todo!(),
+            InstructionDecoded::Jalr { rd, rs1, imm } => {
+                debug!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                self.registers[rd as usize] = self.pc;
+                self.pc = rs1.wrapping_add(imm);
+            }
+            InstructionDecoded::Beq { rs1, rs2, imm } => {
+                debug!("BEQ: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 == rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bne { rs1, rs2, imm } => {
+                debug!("BNE: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 != rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Blt { rs1, rs2, imm } => {
+                debug!("BLT: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize] as i32;
+                let rs2 = self.registers[rs2 as usize] as i32;
+                if rs1 < rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bge { rs1, rs2, imm } => {
+                debug!("BGE: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize] as i32;
+                let rs2 = self.registers[rs2 as usize] as i32;
+                if rs1 >= rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bltu { rs1, rs2, imm } => {
+                debug!("BLTU: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 < rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
+            InstructionDecoded::Bgeu { rs1, rs2, imm } => {
+                debug!("BGEU: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                if rs1 >= rs2 {
+                    self.pc = self.pc.wrapping_add(imm);
+                }
+            }
             InstructionDecoded::Lb { rd, rs1, imm } => {
                 debug!("LB: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let addr = self.registers[rs1 as usize].wrapping_add(imm);
@@ -343,8 +415,6 @@ impl Cpu {
                     .write_csr(imm as usize, tmp.wrapping_add(self.registers[rs1 as usize]));
                 self.registers[rd as usize] = tmp;
             }
-            InstructionDecoded::Fence { .. } => todo!(),
-            InstructionDecoded::FenceI { .. } => todo!(),
             InstructionDecoded::Slti { rd, rs1, imm } => {
                 debug!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
@@ -367,13 +437,36 @@ impl Cpu {
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
             }
+
+            // RV32M
+            InstructionDecoded::Mul { .. } => todo!(),
+            InstructionDecoded::Mulh { .. } => todo!(),
+            InstructionDecoded::Mulsu { .. } => todo!(),
+            InstructionDecoded::Mulu { .. } => todo!(),
+            InstructionDecoded::Div { .. } => todo!(),
+            InstructionDecoded::Divu { .. } => todo!(),
+            InstructionDecoded::Rem { .. } => todo!(),
+            InstructionDecoded::Remu { .. } => todo!(),
         }
 
         Ok(())
     }
 
+    #[inline]
+    pub fn finished(&self) -> bool {
+        self.pc >= (DRAM_BASE + DRAM_SIZE) as RegisterSize
+    }
+
+    pub fn step(&mut self) -> Result<(), String> {
+        if !self.finished() {
+            self.execute()?;
+            self.pc += 4;
+        }
+        Ok(())
+    }
+
     pub fn run(&mut self) -> Result<(), String> {
-        while self.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
+        while !self.finished() {
             self.execute()?;
             self.pc += 4;
         }
