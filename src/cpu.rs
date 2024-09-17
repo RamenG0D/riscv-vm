@@ -1,36 +1,48 @@
-use crate::{instruction_sets::rv32i::{Instruction, InstructionDecoded}, virtual_memory::*};
+use log::debug;
+
+use crate::{
+    bus::Bus,
+    csr::State,
+    instruction_sets::rv32i::{Instruction, InstructionDecoded},
+    memory::{
+        dram::{Sizes, DRAM_BASE, DRAM_SIZE},
+        virtual_memory::MemorySize,
+    },
+};
 
 #[test]
 pub fn kernel_test() {
-    let mut cpu = Cpu::<4096, 5034209>::new();
+    //
+}
 
-    let file = std::fs::read("linux_kernel/vmlinux").unwrap();
-    let mut pbytes = Vec::new();
-    for bytes in file.chunks_exact(4) {
-        let byte = u32::from_ne_bytes(bytes.try_into().unwrap()).to_le();
-        pbytes.push(byte);
-    }
+#[test]
+pub fn program_test() {
+    let mut cpu = Cpu::new();
 
-    cpu.load_program_raw(&pbytes).expect("Failed to load program");
+    println!("Loading program...");
+    cpu.load_program_raw(include_bytes!("../c_test/test.bin"))
+        .expect("Failed to load program");
+    println!("Program LOADED");
 
-    // cpu.pc = 0x1000;
-    println!("Starting CPU at 0x{:08X}", cpu.pc);
-
-    println!("Debugging Memory {:#?}", &cpu.heap_memory.as_slice()[cpu.pc as usize..cpu.pc as usize + 100]);
-
-    while cpu.pc < cpu.heap_memory.len() as RegisterSize {
+    while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
         match cpu.execute() {
-            Ok(_) => (),
-            Err(e) => eprintln!("Error: {}", e),
+            Ok(_) => {
+                println!("{}", cpu.to_string());
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+            }
         }
-        cpu.pc += 1;
+        cpu.pc += 4;
     }
+
+    println!("{}", cpu.to_string());
 }
 
 pub type RegisterSize = u32;
 
 // 32 bit RiscV CPU architecture
-pub struct Cpu<const STACK_SIZE: usize, const HEAP_SIZE: usize> {
+pub struct Cpu {
     // From https://riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf#page=22&zoom=auto,-95,583
     registers: [RegisterSize; 32],
 
@@ -38,13 +50,12 @@ pub struct Cpu<const STACK_SIZE: usize, const HEAP_SIZE: usize> {
     pc: RegisterSize,
 
     // little endian memory / stack array
-    stack_memory: Memory<STACK_SIZE>,
+    bus: Bus,
 
-    // little endian memory / heap array
-    heap_memory: HeapMemory<HEAP_SIZE>,
+    state: State,
 }
 
-impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE> {
+impl Cpu {
     pub const ZERO: RegisterSize = 0;
     pub const RA: RegisterSize = 1;
     pub const SP: RegisterSize = 2;
@@ -53,12 +64,24 @@ impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE>
     pub const PC: RegisterSize = 32;
 
     pub fn new() -> Self {
+        let mut registers = [0; 32];
+        registers[2] = (DRAM_BASE + DRAM_SIZE) as RegisterSize;
         Self {
-            registers: [0; 32],
-            stack_memory: Memory::new(),
-            heap_memory: HeapMemory::new(),
-            pc:  0,// 0x400000,
+            registers,
+            pc: DRAM_BASE as RegisterSize,
+
+            bus: Bus::new(),
+
+            state: State::new(),
         }
+    }
+
+    pub fn get_pc(&self) -> RegisterSize {
+        self.pc
+    }
+
+    pub fn set_pc(&mut self, pc: RegisterSize) {
+        self.pc = pc;
     }
 
     pub fn get_register(&self, register: RegisterSize) -> Result<&RegisterSize, String> {
@@ -85,7 +108,10 @@ impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE>
     }
 
     pub fn fetch(&self) -> Result<Instruction, String> {
-        let inst = self.heap_memory.get(self.pc).ok_or(format!("Failed to fetch memory at addr {}", self.pc))?;
+        let inst = self
+            .bus
+            .read(self.pc, Sizes::Word)
+            .ok_or(format!("Failed to fetch memory at addr {}", self.pc))?;
         Instruction::try_from(inst)
     }
 
@@ -94,301 +120,272 @@ impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE>
 
         match inst.decode()? {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                self.registers[rd as usize] = rs1.wrapping_add(rs2);
+                debug!("ADD: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                let rs1 = self.registers[rs1 as usize] as i32;
+                let rs2 = self.registers[rs2 as usize] as i32;
+                debug!("rs1 = {rs1}, rs2 = {rs2}");
+                self.registers[rd as usize] = (rs1 + rs2) as RegisterSize;
             }
             InstructionDecoded::Addi { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                self.registers[rd as usize] = rs1.wrapping_add(imm);
+                debug!("ADDI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                let rs1 = self.registers[rs1 as usize] as i32;
+                self.registers[rd as usize] = (rs1 + imm as i32) as RegisterSize;
             }
             InstructionDecoded::Sub { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                self.registers[rd as usize] = rs1.wrapping_sub(rs2);
-            }
-            InstructionDecoded::Addw { rd, rs1, rs2 } => {
+                debug!("SUB: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize] as i32;
                 let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = rs1.wrapping_add(rs2) as u32;
-            }
-            InstructionDecoded::Subw { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = rs1.wrapping_sub(rs2) as u32;
-            }
-            InstructionDecoded::Sllw { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = rs1.wrapping_shl(rs2 as u32) as u32;
-            }
-            InstructionDecoded::Srlw { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = rs1.wrapping_shr(rs2 as u32) as u32;
-            }
-            InstructionDecoded::Sraw { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = rs1.wrapping_shr(rs2 as u32) as u32;
+                self.registers[rd as usize] = (rs1 - rs2) as RegisterSize;
             }
             InstructionDecoded::And { rd, rs1, rs2 } => {
+                debug!("AND: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = rs1 & rs2;
             }
             InstructionDecoded::Andi { rd, rs1, imm } => {
+                debug!("ANDI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = rs1 & imm;
             }
             InstructionDecoded::Or { rd, rs1, rs2 } => {
+                debug!("OR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = rs1 | rs2;
             }
             InstructionDecoded::Ori { rd, rs1, imm } => {
+                debug!("ORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = rs1 | imm;
             }
             InstructionDecoded::Xor { rd, rs1, rs2 } => {
+                debug!("XOR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = rs1 ^ rs2;
             }
             InstructionDecoded::Xori { rd, rs1, imm } => {
+                debug!("XORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = rs1 ^ imm;
             }
             InstructionDecoded::Sll { rd, rs1, rs2 } => {
+                debug!("SLL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = rs1 << rs2;
             }
             InstructionDecoded::Slli { rd, rs1, imm } => {
+                debug!("SLLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = rs1 << imm;
             }
             InstructionDecoded::Srl { rd, rs1, rs2 } => {
+                debug!("SRL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = rs1 >> rs2;
             }
             InstructionDecoded::Srli { rd, rs1, imm } => {
+                debug!("SRLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = rs1 >> imm;
             }
             InstructionDecoded::Sra { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = (rs1 >> rs2) as u32;
+                debug!("SRA: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                self.registers[rd as usize] = rs1.wrapping_shr(rs2);
             }
             InstructionDecoded::Srai { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                self.registers[rd as usize] = (rs1 >> imm) as u32;
+                debug!("SRAI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                self.registers[rd as usize] = rs1.wrapping_shr(imm);
             }
             InstructionDecoded::Lui { rd, imm } => {
+                debug!("LUI: rd: {rd}, imm: {imm}");
                 self.registers[rd as usize] = imm << 12;
             }
             InstructionDecoded::AuiPc { rd, imm } => {
+                debug!("AUIPC: rd: {rd}, imm: {imm}");
                 self.registers[rd as usize] = self.pc.wrapping_add(imm << 12);
             }
-            InstructionDecoded::Jal { rd, imm } => {
-                self.registers[rd as usize] = self.pc;
-                // check if the imm (address) is a signed offset in multiples of 2 bytes. The offset is sign-extended and added to the pc to form the jump target address.
-                // Jumps can therefore target a ±1 MiB range. JAL stores the address of the instruction following the jump (pc+4) into register rd.
-                if imm % 2 != 0 {
-                    return Err(format!("Jump address is not a multiple of 2"));
-                }
+            InstructionDecoded::Jal { rd, imm1, imm2, imm3 } => {
+                self.registers[rd as usize] = self.pc; // store the return address
+
+                let imm = imm1 << 19 | imm2 << 11 | imm3 << 0;
+
+                debug!("JAL: imm: {imm}");
+
                 self.pc = self.pc.wrapping_add(imm);
             }
-            InstructionDecoded::Jalr { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                self.registers[rd as usize] = self.pc;
-                self.pc = rs1.wrapping_add(imm);
-            }
-            InstructionDecoded::Beq { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                if rs1 == rs2 {
-                    // check if the imm (address) is 4 byte aligned
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch address is not 4 byte aligned"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
-            InstructionDecoded::Bne { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                if rs1 != rs2 {
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch offset is not a multiple of 4"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
-            InstructionDecoded::Blt { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                if rs1 < rs2 {
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch offset is not a multiple of 4"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
-            InstructionDecoded::Bge { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                if rs1 >= rs2 {
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch offset is not a multiple of 4"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
-            InstructionDecoded::Bltu { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                if rs1 < rs2 {
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch offset is not a multiple of 4"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
-            InstructionDecoded::Bgeu { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                if rs1 >= rs2 {
-                    if imm % 4 != 0 {
-                        return Err(format!("Branch offset is not a multiple of 4"));
-                    }
-                    self.pc = self.pc.wrapping_add(imm);
-                }
-            }
+            InstructionDecoded::Jalr { .. } => todo!(),
+            InstructionDecoded::Beq { .. } => todo!(),
+            InstructionDecoded::Bne { .. } => todo!(),
+            InstructionDecoded::Blt { .. } => todo!(),
+            InstructionDecoded::Bge { .. } => todo!(),
+            InstructionDecoded::Bltu { .. } => todo!(),
+            InstructionDecoded::Bgeu { .. } => todo!(),
             InstructionDecoded::Lb { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte as i8 as i32 as u32;
+                debug!("LB: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self.bus.read(addr as MemorySize, Sizes::Byte)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value as i8 as i32 as u32;
             }
             InstructionDecoded::Lh { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte as i16 as i32 as u32;
+                debug!("LH: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self
+                    .bus
+                    .read(addr, Sizes::HalfWord)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value as i16 as i32 as u32;
             }
             InstructionDecoded::Lw { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte;
-            }
-            InstructionDecoded::Ld { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte;
+                debug!("LW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self
+                    .bus
+                    .read(addr, Sizes::Word)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value as i32 as u32;
             }
             InstructionDecoded::Lbu { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte & 0xFF;
+                debug!("LBU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self
+                    .bus
+                    .read(addr, Sizes::Byte)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value;
             }
             InstructionDecoded::Lhu { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte & 0xFFFF;
+                debug!("LHU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self
+                    .bus
+                    .read(addr, Sizes::HalfWord)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value;
             }
             InstructionDecoded::Lwu { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let addr = rs1.wrapping_add(imm);
-                let byte = self.stack_memory.get(addr).ok_or(format!("Failed to fetch memory at addr {}", addr))?;
-                self.registers[rd as usize] = byte;
+                debug!("LWU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                let value = self
+                    .bus
+                    .read(addr, Sizes::Word)
+                    .ok_or(format!("Failed to read memory at addr {addr}"))?;
+                self.registers[rd as usize] = value;
             }
             InstructionDecoded::Sb { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                let addr = rs1.wrapping_add(imm);
-                self.heap_memory.set(addr, rs2)?;
+                debug!("SB: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                self.bus
+                    .write(addr, self.registers[rs2 as usize], Sizes::Byte)
+                    .ok_or(format!("Failed to write byte to memory at addr {addr}"))?;
             }
             InstructionDecoded::Sh { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                let addr = rs1.wrapping_add(imm);
-                self.stack_memory.set(addr, rs2)?;
+                debug!("SH: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                self.bus
+                    .write(addr, self.registers[rs2 as usize], Sizes::HalfWord)
+                    .ok_or(format!("Failed to write hword memory at addr {addr}"))?;
             }
             InstructionDecoded::Sw { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                let addr = rs1.wrapping_add(imm);
-                self.stack_memory.set(addr, rs2)?;
+                debug!("SW: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let addr = self.registers[rs1 as usize].wrapping_add(imm);
+                self.bus
+                    .write(addr, self.registers[rs2 as usize], Sizes::Word)
+                    .ok_or(format!("Failed to write word memory at addr {addr}"))?;
             }
-            InstructionDecoded::Sd { rs1, rs2, imm } => {
-                let rs1 = self.registers[rs1 as usize];
-                let rs2 = self.registers[rs2 as usize];
-                let addr = rs1.wrapping_add(imm);
-                self.stack_memory.set(addr, rs2)?;
+            InstructionDecoded::ECall => {
+                debug!("ECALL");
             }
-            InstructionDecoded::ECall => { println!("ECALL"); }
-            InstructionDecoded::EBreak => { println!("EBREAK"); }
-            InstructionDecoded::CsrRw { .. } => todo!(),
-            InstructionDecoded::CsrRs { .. } => todo!(),
-            InstructionDecoded::CsrRc { .. } => todo!(),
-            InstructionDecoded::CsrRwi { .. } => todo!(),
-            InstructionDecoded::CsrRsi { .. } => todo!(),
+            InstructionDecoded::EBreak => {
+                debug!("EBREAK");
+            }
+            InstructionDecoded::CsrRw { rd, rs1, imm } => {
+                debug!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let tmp = self.state.read_csr(imm as usize);
+                self.state
+                    .write_csr(imm as usize, self.registers[rs1 as usize]);
+                self.registers[rd as usize] = tmp;
+            }
+            InstructionDecoded::CsrRs { rd, rs1, imm } => {
+                debug!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let tmp = self.state.read_csr(imm as usize);
+                self.state
+                    .write_csr(imm as usize, tmp | self.registers[rs1 as usize]);
+                self.registers[rd as usize] = tmp;
+            }
+            InstructionDecoded::CsrRc { rd, rs1, imm } => {
+                debug!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let tmp = self.state.read_csr(imm as usize);
+                self.state
+                    .write_csr(imm as usize, tmp & !self.registers[rs1 as usize]);
+                self.registers[rd as usize] = tmp;
+            }
+            InstructionDecoded::CsrRwi { rd, rs1, imm } => {
+                debug!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let tmp = self.state.read_csr(imm as usize);
+                self.state
+                    .write_csr(imm as usize, tmp.wrapping_add(self.registers[rs1 as usize]));
+                self.registers[rd as usize] = tmp;
+            }
+            InstructionDecoded::CsrRsi { rd, rs1, imm } => {
+                debug!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let tmp = self.state.read_csr(imm as usize);
+                self.state
+                    .write_csr(imm as usize, tmp.wrapping_add(self.registers[rs1 as usize]));
+                self.registers[rd as usize] = tmp;
+            }
+            InstructionDecoded::Fence { .. } => todo!(),
+            InstructionDecoded::FenceI { .. } => todo!(),
             InstructionDecoded::Slti { rd, rs1, imm } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                self.registers[rd as usize] = if rs1 < imm as i32 { 1 } else { 0 };
+                debug!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.registers[rs1 as usize];
+                self.registers[rd as usize] = if rs1 < imm { 1 } else { 0 };
             }
             InstructionDecoded::Sltiu { rd, rs1, imm } => {
+                debug!("SLTIU: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
                 self.registers[rd as usize] = if rs1 < imm { 1 } else { 0 };
             }
             InstructionDecoded::Slt { rd, rs1, rs2 } => {
-                let rs1 = self.registers[rs1 as usize] as i32;
-                let rs2 = self.registers[rs2 as usize] as i32;
-                self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
-            }
-            InstructionDecoded::Sltu { rd, rs1, rs2 } => {
+                debug!("SLT: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.registers[rs1 as usize];
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
             }
-            InstructionDecoded::Fence  { .. } => todo!(),
-            InstructionDecoded::FenceI { .. } => todo!(),
+            InstructionDecoded::Sltu { rd, rs1, rs2 } => {
+                debug!("SLTU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                let rs1 = self.registers[rs1 as usize];
+                let rs2 = self.registers[rs2 as usize];
+                self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
+            }
         }
 
         Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), String> {
-        while self.pc < self.heap_memory.len() as RegisterSize {
+        while self.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
             self.execute()?;
-            self.pc += 1;
+            self.pc += 4;
         }
         Ok(())
     }
 
-    pub fn load_program_raw(&mut self, program: &[MemorySize]) -> Result<(), String> {
-        if program.len() > self.heap_memory.len() {
-            return Err(format!(
-                "Program is too large to fit in memory => size: {} bytes | actual size: {} bytes",
-                program.len() * 4,
-                self.heap_memory.len() * 4
-            ));
+    pub fn load_program_raw(&mut self, program: &[u8]) -> Result<(), String> {
+        let mut addr = DRAM_BASE as MemorySize;
+        for i in 0..program.len() {
+            self.bus
+                .write(addr, program[i] as RegisterSize, Sizes::Byte)
+                .ok_or(format!("Failed to write memory at addr {addr}"))?;
+            addr += 1;
         }
-
-        println!("Loading program into heap memory");
-        for (i, &inst) in program.iter().enumerate() {
-            // println!("Loading Inst 0x{inst:08X} into memory");
-            self.heap_memory.set(i as MemorySize, inst)?;
-        }
-        println!("Program loaded into heap memory");
-
         Ok(())
     }
 
@@ -398,9 +395,11 @@ impl<const STACK_SIZE: usize, const HEAP_SIZE: usize> Cpu<STACK_SIZE, HEAP_SIZE>
     {
         let program = program
             .iter()
-            .map(|&inst| Into::<Instruction>::into(inst).to_inner())
-            .collect::<Vec<MemorySize>>();
-        self.load_program_raw(&program)
+            .map(|&inst| inst.into().to_inner())
+            .collect::<Vec<_>>();
+        let program =
+            unsafe { std::slice::from_raw_parts(program.as_ptr() as *const u8, program.len() * 4) };
+        self.load_program_raw(program)
     }
 
     pub fn to_string(&self) -> String {
