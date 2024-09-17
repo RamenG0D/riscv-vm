@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, info};
 
 use crate::{
     bus::Bus,
@@ -10,32 +10,33 @@ use crate::{
     },
 };
 
-#[test]
-pub fn fib_test() {
-    let mut cpu = Cpu::new();
+// #[test]
+// pub fn fib_test() {
+//     let mut cpu = Cpu::new();
 
-    println!("Loading program...");
-    cpu.load_program_raw(include_bytes!("../c_test/fib.bin"))
-        .expect("Failed to load program");
-    println!("Program LOADED");
+//     println!("Loading program...");
+//     cpu.load_program_raw(include_bytes!("../c_test/fib.bin"))
+//         .expect("Failed to load program");
+//     println!("Program LOADED");
 
-    while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
-        match cpu.execute() {
-            Ok(_) => {
-                println!("{}", cpu.to_string());
-            }
-            Err(e) => {
-                eprintln!("Error: {e}");
-            }
-        }
-        cpu.pc += 4;
-    }
+//     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
+//         match cpu.execute() {
+//             Ok(_) => {
+//                 println!("{}", cpu.to_string());
+//             }
+//             Err(e) => {
+//                 eprintln!("Error: {e}");
+//             }
+//         }
+//         cpu.pc += 4;
+//     }
 
-    println!("{}", cpu.to_string());
-}
+//     println!("{}", cpu.to_string());
+// }
 
 #[test]
 pub fn program_test() {
+    crate::logging::init_logging();
     let mut cpu = Cpu::new();
 
     println!("Loading program...");
@@ -45,11 +46,10 @@ pub fn program_test() {
 
     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
         match cpu.execute() {
-            Ok(_) => {
-                println!("{}", cpu.to_string());
-            }
+            Ok(_) => (),
             Err(e) => {
-                eprintln!("Error: {e}");
+                log::error!("Error: {e}");
+                break;
             }
         }
         cpu.pc += 4;
@@ -83,16 +83,19 @@ impl Cpu {
     pub const PC: RegisterSize = 32;
 
     pub fn new() -> Self {
+        info!("Initializing CPU...");
         let mut registers = [0; 32];
         registers[2] = (DRAM_BASE + DRAM_SIZE) as RegisterSize;
-        Self {
+        let cpu = Self {
             registers,
             pc: DRAM_BASE as RegisterSize,
 
             bus: Bus::new(),
 
             state: State::new(),
-        }
+        };
+        info!("CPU initialized");
+        cpu
     }
 
     pub fn get_pc(&self) -> RegisterSize {
@@ -407,8 +410,6 @@ impl Cpu {
                     .write_csr(imm as usize, tmp.wrapping_add(self.registers[rs1 as usize]));
                 self.registers[rd as usize] = tmp;
             }
-            InstructionDecoded::Fence { .. } => todo!(),
-            InstructionDecoded::FenceI { .. } => todo!(),
             InstructionDecoded::Slti { rd, rs1, imm } => {
                 debug!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.registers[rs1 as usize];
@@ -431,13 +432,36 @@ impl Cpu {
                 let rs2 = self.registers[rs2 as usize];
                 self.registers[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
             }
+
+            // RV32M
+            InstructionDecoded::Mul { .. } => todo!(),
+            InstructionDecoded::Mulh { .. } => todo!(),
+            InstructionDecoded::Mulsu { .. } => todo!(),
+            InstructionDecoded::Mulu { .. } => todo!(),
+            InstructionDecoded::Div { .. } => todo!(),
+            InstructionDecoded::Divu { .. } => todo!(),
+            InstructionDecoded::Rem { .. } => todo!(),
+            InstructionDecoded::Remu { .. } => todo!(),
         }
 
         Ok(())
     }
 
+    #[inline]
+    pub fn finished(&self) -> bool {
+        self.pc >= (DRAM_BASE + DRAM_SIZE) as RegisterSize
+    }
+
+    pub fn step(&mut self) -> Result<(), String> {
+        if !self.finished() {
+            self.execute()?;
+            self.pc += 4;
+        }
+        Ok(())
+    }
+
     pub fn run(&mut self) -> Result<(), String> {
-        while self.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
+        while !self.finished() {
             self.execute()?;
             self.pc += 4;
         }

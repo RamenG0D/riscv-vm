@@ -9,11 +9,11 @@ pub fn main() {
     let mut cpu = Cpu::new();
 
     println!("Loading program...");
-    cpu.load_program_raw(include_bytes!("../../linux_kernel/kernel"))
+    cpu.load_program_raw(include_bytes!("../../c_test/fib.bin"))
         .expect("Failed to load program");
     println!("Program LOADED");
 
-    const PLEN: usize = include_bytes!("../../linux_kernel/kernel").len();
+    const PLEN: usize = include_bytes!("../../c_test/fib.bin").len();
     while cpu.get_pc() < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
         match cpu.execute() {
             Ok(_) => (),
