@@ -36,13 +36,13 @@ use crate::{
 
 #[test]
 pub fn program_test() {
-    crate::logging::init_logging();
+    // crate::logging::init_logging(); // enable for extra debug output
     let mut cpu = Cpu::new();
 
-    println!("Loading program...");
+    debug!("Loading program...");
     cpu.load_program_raw(include_bytes!("../c_test/test.bin"))
         .expect("Failed to load program");
-    println!("Program LOADED");
+    debug!("Program LOADED");
 
     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as RegisterSize {
         match cpu.execute() {
@@ -55,7 +55,12 @@ pub fn program_test() {
         cpu.pc += 4;
     }
 
-    println!("{}", cpu.to_string());
+    debug!("{}", cpu.to_string());
+
+    debug!("Program executed");
+
+    assert_eq!(*cpu.get_register(10).unwrap(), 31);
+    assert_eq!(*cpu.get_register(15).unwrap(), 0x1F);
 }
 
 pub type RegisterSize = u32;
