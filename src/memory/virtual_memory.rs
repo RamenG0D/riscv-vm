@@ -46,7 +46,7 @@ impl<const L: usize> Memory<L> {
             return None;
         }
         let index = index as usize;
-        self.array[index..index + 4].copy_from_slice(&value.to_le_bytes());
+        self.array[index..index + 4].copy_from_slice(&value.to_ne_bytes());
         Some(())
     }
 
@@ -55,7 +55,7 @@ impl<const L: usize> Memory<L> {
             return None;
         }
         let index = index as usize;
-        self.array[index..index + 2].copy_from_slice(&value.to_le_bytes());
+        self.array[index..index + 2].copy_from_slice(&value.to_ne_bytes());
         Some(())
     }
 
@@ -63,7 +63,7 @@ impl<const L: usize> Memory<L> {
         if index > L as MemorySize {
             return None;
         }
-        self.array[index as usize] = (value as u8).to_le();
+        self.array[index as usize] = value as u8;
         Some(())
     }
 
@@ -85,34 +85,31 @@ impl<const L: usize> HeapMemory<L> {
     }
 
     pub fn read32(&self, index: usize) -> MemorySize {
-        let value = u32::from_le_bytes([
-            self.memory[index],
-            self.memory[index + 1],
-            self.memory[index + 2],
-            self.memory[index + 3],
-        ]);
-        value
+        (self.memory[index] as MemorySize | ((self.memory[index + 1] as MemorySize) << 8) | ((self.memory[index + 2] as MemorySize) << 16) | ((self.memory[index + 3] as MemorySize) << 24)) as MemorySize
     }
 
     pub fn read16(&self, index: usize) -> u16 {
-        let value = u16::from_le_bytes([self.memory[index], self.memory[index + 1]]);
-        value
+        (self.memory[index] as MemorySize | ((self.memory[index + 1] as MemorySize) << 8)) as u16
     }
 
     pub fn read8(&self, index: usize) -> u8 {
-        self.memory[index]
+        self.memory[index] as u8
     }
 
     pub fn set32(&mut self, index: usize, value: MemorySize) {
-        self.memory[index..index + 4].copy_from_slice(&value.to_le_bytes());
+        self.memory[index] = (value & 0xFF) as u8;
+        self.memory[index + 1] = ((value >> 8) & 0xFF) as u8;
+        self.memory[index + 2] = ((value >> 16) & 0xFF) as u8;
+        self.memory[index + 3] = ((value >> 24) & 0xFF) as u8;
     }
 
     pub fn set16(&mut self, index: usize, value: MemorySize) {
-        self.memory[index..index + 2].copy_from_slice(&value.to_le_bytes());
+        self.memory[index] = (value & 0xFF) as u8;
+        self.memory[index + 1] = ((value >> 8) & 0xFF) as u8;
     }
 
     pub fn set8(&mut self, index: usize, value: MemorySize) {
-        self.memory[index] = (value as u8).to_le();
+        self.memory[index] = value as u8;
     }
 
     pub fn len(&self) -> usize {

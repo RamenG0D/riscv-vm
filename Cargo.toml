@@ -12,6 +12,7 @@ crate-type = ["rlib"]
 [dependencies]
 bit_ops = "0.1.13"
 chrono = "0.4.38"
-fern = "0.6.2"
+colored = "2.1.0"
+fern = { version = "0.6.2", features = ["colored"] }
 log = "0.4.22"
 

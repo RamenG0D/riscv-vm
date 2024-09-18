@@ -1,8 +1,8 @@
-use riscv_vm::{cpu::Cpu, memory::dram::DRAM_BASE};
-use log::{error, info};
+use log::error;
+use riscv_vm::{cpu::Cpu, trap::Trap};
 
 pub fn main() {
-    let program = include_bytes!("fs.img");
+    let program = include_bytes!("../../c_test/fib.bin");
 
     riscv_vm::logging::init_logging();
 
@@ -10,10 +10,18 @@ pub fn main() {
 
     cpu.load_program_raw(program).expect("Failed to load program");
 
-    while cpu.get_pc() < (DRAM_BASE + program.len()) as u32 {
+    while !cpu.finished() {
         match cpu.step() {
-            Ok(_) => info!("PC: {}", cpu.get_pc()),
-            Err(e) => error!("Error: {e}"),
+            Ok(_) => (),
+            Err(e) => {
+                error!("Error PC: {:#X}", cpu.get_pc());
+                e.take_trap(&mut cpu);
+                if e.is_fatal() {
+                    error!("Fatal trap: {:#X}", e.exception_code());
+                    error!("Exception: {e:#?}");
+                    break;
+                }
+            }
         }
     }
 }

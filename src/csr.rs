@@ -1,3 +1,4 @@
+
 // Machine-level CSRs.
 /// Hardware thread ID.
 pub const MHARTID: usize = 0xf14;
@@ -44,6 +45,14 @@ pub const SIP: usize = 0x144;
 /// Supervisor address translation and protection.
 pub const SATP: usize = 0x180;
 
+/// The privileged mode.
+#[derive(Debug, PartialEq, PartialOrd, Eq, Copy, Clone)]
+pub enum Mode {
+    User = 0b00,
+    Supervisor = 0b01,
+    Machine = 0b11,
+}
+
 pub struct State {
     csr: [u32; 4096],
 }
@@ -53,19 +62,20 @@ impl State {
         Self { csr: [0; 4096] }
     }
 
-    pub fn write_csr(&mut self, addr: usize, value: u32) {
+    pub fn write_csr(&mut self, addr: usize, value: u32) -> Option<()> {
         match addr {
             SIE => {
-                self.csr[MIE] = (self.csr[MIE] & !self.csr[MIDELEG]) | (value & self.csr[MIDELEG]);
+                self.csr[MIE] = (self.csr[MIE] & !self.csr[MIDELEG]) | (value & self.csr[MIDELEG])
             }
-            _ => self.csr[addr] = value,
+            _ => *self.csr.get_mut(addr)? = value,
         }
+        Some(())
     }
 
-    pub fn read_csr(&self, addr: usize) -> u32 {
+    pub fn read_csr(&self, addr: usize) -> Option<u32> {
         match addr {
-            SIE => self.csr[MIE] & self.csr[MIDELEG],
-            _ => self.csr[addr],
+            SIE => Some(self.csr[MIE] & self.csr[MIDELEG]),
+            _ => self.csr.get(addr).map(|&v| v),
         }
     }
 }

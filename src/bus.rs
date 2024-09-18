@@ -1,11 +1,13 @@
-use crate::memory::{
+use log::error;
+
+use crate::{memory::{
     dram::{Dram, Sizes, DRAM_BASE, DRAM_SIZE},
     virtual_memory::MemorySize,
-};
+}, trap::Exception};
 
 pub trait Device {
-    fn load(&self, addr: u64, size: u64) -> Option<u64>;
-    fn store(&mut self, addr: u64, size: u64, value: u64) -> Option<()>;
+    fn load(&self, addr: MemorySize, size: MemorySize) -> Option<MemorySize>;
+    fn store(&mut self, addr: MemorySize, size: MemorySize, value: MemorySize) -> Option<()>;
 }
 
 pub struct Bus {
@@ -17,19 +19,31 @@ impl Bus {
         Self { dram: Dram::new() }
     }
 
-    pub fn read(&self, address: MemorySize, size: Sizes) -> Option<MemorySize> {
+    pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         if (address as usize) < (DRAM_BASE + DRAM_SIZE) {
-            self.dram.read((address - DRAM_BASE as MemorySize) as usize, size)
+            let addr = address.checked_sub(DRAM_BASE as MemorySize).ok_or_else(|| {
+                error!("Failed to Subtract DRAM_BASE from address: {:#X}", address);
+                error!("LoadAccessFault: {:#X}", address);
+                Exception::LoadAccessFault
+            })? as usize;
+            self.dram.read(addr, size)
         } else {
-            None
+            error!("LoadAccessFault: {:#X}", address);
+            Err(Exception::LoadAccessFault)
         }
     }
 
-    pub fn write(&mut self, address: MemorySize, value: MemorySize, size: Sizes) -> Option<()> {
+    pub fn write(&mut self, address: MemorySize, value: MemorySize, size: Sizes) -> Result<(), Exception> {
         if (address as usize) < (DRAM_BASE + DRAM_SIZE) {
-            self.dram.write((address - DRAM_BASE as MemorySize) as usize, value, size)
+            let addr = address.checked_sub(DRAM_BASE as MemorySize).ok_or_else(|| {
+                error!("Failed to Subtract DRAM_BASE from address: {:#X}", address);
+                error!("StoreAMOAccessFault: {:#X}", address);
+                Exception::StoreAMOAccessFault
+            })? as usize;
+            self.dram.write(addr, value, size)
         } else {
-            None
+            error!("StoreAMOAccessFault: {:#X}", address);
+            Err(Exception::StoreAMOAccessFault)
         }
     }
 }

@@ -1,9 +1,12 @@
-pub mod logging;
 pub mod bus;
 pub mod cpu;
 pub mod csr;
 pub mod instruction_sets;
+pub mod logging;
 pub mod memory;
+pub mod registers;
+pub mod trap;
+pub mod devices;
 
 #[test]
 fn run_cpu() {
@@ -15,7 +18,7 @@ fn run_cpu() {
     cpu.load_program(&[inst]).expect("Failed to load program");
 
     // should set x1 to 30
-    cpu.execute().expect("Failed to run CPU");
+    cpu.step().unwrap();
 
     assert_eq!(*cpu.get_register(1).unwrap(), 30);
 }

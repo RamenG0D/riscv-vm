@@ -1,3 +1,5 @@
+use crate::trap::Exception;
+
 use super::virtual_memory::{HeapMemory, MemorySize};
 
 pub const DRAM_SIZE: usize = 1024 * 1024 * 128; // 1GB
@@ -20,19 +22,28 @@ impl Dram {
         }
     }
 
-    pub fn read(&self, address: usize, size: Sizes) -> Option<MemorySize> {
+    pub fn read(&self, address: usize, size: Sizes) -> Result<MemorySize, Exception> {
         match size {
-            Sizes::Byte =>     Some(self.memory.read8 (address) as MemorySize),
-            Sizes::HalfWord => Some(self.memory.read16(address) as MemorySize),
-            Sizes::Word =>     Some(self.memory.read32(address)),
+            Sizes::Byte => Ok(self.memory.read8(address) as MemorySize),
+            Sizes::HalfWord => Ok(self.memory.read16(address) as MemorySize),
+            Sizes::Word => Ok(self.memory.read32(address) as MemorySize),
         }
     }
 
-    pub fn write(&mut self, address: usize, value: MemorySize, size: Sizes) -> Option<()> {
+    pub fn write(&mut self, address: usize, value: MemorySize, size: Sizes) -> Result<(), Exception> {
         match size {
-            Sizes::Byte =>     Some(self.memory.set8 (address, value as MemorySize)),
-            Sizes::HalfWord => Some(self.memory.set16(address, value as MemorySize)),
-            Sizes::Word =>     Some(self.memory.set32(address, value)),
+            Sizes::Byte => {
+                self.memory.set8(address, value);
+                Ok(())
+            }
+            Sizes::HalfWord => {
+                self.memory.set16(address, value);
+                Ok(())
+            }
+            Sizes::Word => {
+                self.memory.set32(address, value);
+                Ok(())
+            }
         }
     }
 }
