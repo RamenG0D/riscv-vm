@@ -1,21 +1,18 @@
-pub mod logging;
 pub mod bus;
 pub mod cpu;
 pub mod csr;
 pub mod instruction_sets;
+pub mod logging;
 pub mod memory;
+pub mod registers;
+pub mod trap;
+pub mod devices;
 
-#[test]
-fn run_cpu() {
-    use cpu::Cpu;
-    use instruction_sets::rv32i::instructions::*;
-    let mut cpu = Cpu::new();
-    let inst = ADDI.encode(|b| b.rd(1).rs1(1).imm1(30));
-    println!("ADDI: 0x{:08X}", inst.to_inner());
-    cpu.load_program(&[inst]).expect("Failed to load program");
+// internal export
+pub mod bit_ops {
+    pub use bit_ops::bitops_u32::*;
 
-    // should set x1 to 30
-    cpu.execute().expect("Failed to run CPU");
-
-    assert_eq!(*cpu.get_register(1).unwrap(), 30);
+    pub fn zero_extend(value: u32) -> u32 {
+        clear_bit(value, 31)
+    }
 }

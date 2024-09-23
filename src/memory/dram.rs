@@ -1,7 +1,9 @@
+use crate::trap::Exception;
+
 use super::virtual_memory::{HeapMemory, MemorySize};
 
-pub const DRAM_SIZE: usize = 1024 * 1024 * 128; // 1GB
-pub const DRAM_BASE: usize = 0x8000_0000;
+pub const DRAM_SIZE: MemorySize = 1024 * 1024 * 128; // 1GB
+pub const DRAM_BASE: MemorySize = 0x8000_0000;
 
 pub enum Sizes {
     Byte,
@@ -9,30 +11,29 @@ pub enum Sizes {
     Word,
 }
 
+const DRAM_LEN: usize = DRAM_SIZE as usize;
 pub struct Dram {
-    memory: HeapMemory<DRAM_SIZE>,
+    memory: HeapMemory<DRAM_LEN>,
 }
 
 impl Dram {
     pub fn new() -> Self {
-        Self {
-            memory: HeapMemory::new(),
+        Self {memory: HeapMemory::new() }
+    }
+
+    pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+        match size {
+            Sizes::Byte => Ok(self.memory.read8(address)? as MemorySize),
+            Sizes::HalfWord => Ok(self.memory.read16(address)? as MemorySize),
+            Sizes::Word => Ok(self.memory.read32(address)? as MemorySize),
         }
     }
 
-    pub fn read(&self, address: usize, size: Sizes) -> Option<MemorySize> {
+    pub fn write(&mut self, address: MemorySize, value: MemorySize, size: Sizes) -> Result<(), Exception> {
         match size {
-            Sizes::Byte =>     Some(self.memory.read8 (address) as MemorySize),
-            Sizes::HalfWord => Some(self.memory.read16(address) as MemorySize),
-            Sizes::Word =>     Some(self.memory.read32(address)),
-        }
-    }
-
-    pub fn write(&mut self, address: usize, value: MemorySize, size: Sizes) -> Option<()> {
-        match size {
-            Sizes::Byte =>     Some(self.memory.set8 (address, value as MemorySize)),
-            Sizes::HalfWord => Some(self.memory.set16(address, value as MemorySize)),
-            Sizes::Word =>     Some(self.memory.set32(address, value)),
+            Sizes::Byte => self.memory.set8(address, value),
+            Sizes::HalfWord => self.memory.set16(address, value),
+            Sizes::Word => self.memory.set32(address, value),
         }
     }
 }

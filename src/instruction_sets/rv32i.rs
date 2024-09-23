@@ -1,567 +1,427 @@
+use compressed::is_compressed;
+
+use super::instructions::InstructionDecoded;
+
 mod internal {
-    pub use bit_ops::bitops_u32::create_mask;
+    pub use bit_ops::bitops_u32::*;
+    pub fn zero_extend(value: u32) -> u32 {
+        clear_bit(value, 31)
+    }
 }
 
 pub type InstructionSize = u32;
+pub type SignedInstructionSize = i32;
 
-pub struct InstructionBuilder {
+// SHOULD ONLY BE USED TO GENERATE THE INSTRUCTION BASE / MASK (uses lots of const fn's and such to stay at comptime as much as possible)
+struct InstructionBuilder {
     inst: InstructionSize,
 }
 
 impl InstructionBuilder {
-    pub const fn builder() -> Self {
+    const fn builder() -> Self {
         Self { inst: 0 }
     }
 
-    pub const fn build(self) -> InstructionSize {
+    const fn build(self) -> InstructionSize {
         self.inst
     }
 
-    pub const fn opcode(mut self, value: InstructionSize) -> Self {
+    const fn opcode(mut self, value: InstructionSize) -> Self {
         self.inst |= value;
         self
     }
-    pub const fn rd(mut self, value: InstructionSize) -> Self {
-        self.inst |= value << 7;
-        self
-    }
-    pub const fn rs1(mut self, value: InstructionSize) -> Self {
-        self.inst |= value << 15;
-        self
-    }
-    pub const fn rs2(mut self, value: InstructionSize) -> Self {
-        self.inst |= value << 20;
-        self
-    }
-    pub const fn funct3(mut self, value: InstructionSize) -> Self {
+    const fn funct3(mut self, value: InstructionSize) -> Self {
         self.inst |= value << 12;
         self
     }
-    pub const fn funct7(mut self, value: InstructionSize) -> Self {
-        self.inst |= value << 25;
-        self
-    }
-    pub const fn imm1(mut self, value: InstructionSize) -> Self {
-        self.inst |= value << 20;
-        self
-    }
-    pub const fn imm2(mut self, value: InstructionSize) -> Self {
+    const fn funct7(mut self, value: InstructionSize) -> Self {
         self.inst |= value << 25;
         self
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstructionFormat {
     RType,
     IType,
     SType,
     UType,
-
-    // TODO: NOT FINISHED
-    SBType,
+    BType,
     JType,
 }
 
-pub enum InstructionDecoded {
-    Lb {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Lh {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Lw {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Lbu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Lhu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Lwu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Addi {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Slli {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Slti {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Sltiu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Xori {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Srli {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Srai {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Ori {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Andi {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    AuiPc {
-        rd: InstructionSize,
-        imm: InstructionSize,
-    },
-    Sb {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Sh {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Sw {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Add {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Sub {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Sll {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Slt {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Sltu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Xor {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Srl {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Sra {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Or {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    And {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Lui {
-        rd: InstructionSize,
-        imm: InstructionSize,
-    },
-    Beq {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Bne {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Blt {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Bge {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Bltu {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Bgeu {
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-        imm: InstructionSize,
-    },
-    Jalr {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    Jal {
-        rd: InstructionSize,
-        imm1: InstructionSize,
-        imm2: InstructionSize,
-        imm3: InstructionSize,
-    },
-    ECall,
-    EBreak,
-    CsrRw {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    CsrRs {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    CsrRc {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    CsrRwi {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-    CsrRsi {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        imm: InstructionSize,
-    },
-
-    // M Extension
-    Mul {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Mulh {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Mulsu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Mulu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Div {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Divu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Rem {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
-    Remu {
-        rd: InstructionSize,
-        rs1: InstructionSize,
-        rs2: InstructionSize,
-    },
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    UnknownInstruction(String),
+    UnknownInstructionFormat(String),
+    NotCompressedInstruction,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Instruction {
-    inst: InstructionSize,
-    format: InstructionFormat,
-}
-
-impl Instruction {
-    pub const fn make(inst: InstructionSize, format: InstructionFormat) -> Self {
-        Self { inst, format }
-    }
-
-    // used to set certain bits in the instruction (args of the instruction)
-    pub fn encode(&self, value: &[InstructionSize]) -> Instruction {
-        let mut inst = self.inner();
-        for (i, v) in value.iter().enumerate() {
-            inst |= v << i;
-        }
-        Self::from(inst)
-    }
-
-    pub fn from(value: InstructionSize) -> Self {
-        match Instruction::try_from(value) {
-            Ok(v) => v,
-            Err(e) => {
-                panic!("Failed to create Instruction: {e}");
-            }
-        }
-    }
-
-    pub fn decode(self) -> Result<InstructionDecoded, String> {
-        match self.format {
-            InstructionFormat::IType => {
-                let rd = self.rd().unwrap();
-                let rs1 = self.rs1().unwrap();
-                let imm = self.immediate1().unwrap();
-
-                match self.opcode() {
-                    instructions::LOAD_MATCH => {
-                        match self.funct3().ok_or("could not get funct3")? {
-                            instructions::lb::FUNCT3 => Ok(InstructionDecoded::Lb { rd, rs1, imm }),
-                            instructions::lh::FUNCT3 => Ok(InstructionDecoded::Lh { rd, rs1, imm }),
-                            instructions::lw::FUNCT3 => Ok(InstructionDecoded::Lw { rd, rs1, imm }),
-                            instructions::ld::FUNCT3 => {
-                                Err(format!("Unsuppored LD instruction (64 bit ONLY)"))
-                            }
-                            instructions::lbu::FUNCT3 => {
-                                Ok(InstructionDecoded::Lbu { rd, rs1, imm })
-                            }
-                            instructions::lhu::FUNCT3 => {
-                                Ok(InstructionDecoded::Lhu { rd, rs1, imm })
-                            }
-                            instructions::lwu::FUNCT3 => {
-                                Ok(InstructionDecoded::Lwu { rd, rs1, imm })
-                            }
-                            _ => Err(format!("Unknown funct3 value for IType instruction")),
-                        }
-                    }
-                    instructions::ARITMETIC_IMMEDIATE_MATCH => {
-                        match self.funct3().ok_or("could not get funct3")? {
-                            instructions::addi::FUNCT3 =>  Ok(InstructionDecoded::Addi { rd, rs1,  imm: ((self.inst as i32 & itype::IMM1 as i32) >> 20) as u32 }),
-                            instructions::slli::FUNCT3 =>  Ok(InstructionDecoded::Slli { rd, rs1,  imm }),
-                            instructions::slti::FUNCT3 =>  Ok(InstructionDecoded::Slti { rd, rs1,  imm }),
-                            instructions::sltiu::FUNCT3 => Ok(InstructionDecoded::Sltiu { rd, rs1, imm }),
-                            instructions::xori::FUNCT3 =>  Ok(InstructionDecoded::Xori { rd, rs1,  imm }),
-                            instructions::srli::FUNCT3 => match self.funct7().ok_or("couldnt get funct7")? {
-                                instructions::srli::FUNCT7 => Ok(InstructionDecoded::Srli { rd, rs1, imm }),
-                                instructions::srai::FUNCT7 => Ok(InstructionDecoded::Srai { rd, rs1, imm }),
-                                _ => Err(format!("Unknown funct7 value for IType instruction")),
-                            },
-                            instructions::ori::FUNCT3 =>  Ok(InstructionDecoded::Ori { rd, rs1, imm }),
-                            instructions::andi::FUNCT3 => Ok(InstructionDecoded::Andi { rd, rs1, imm }),
-                            _ => Err(format!("Unknown funct3 value for IType instruction")),
-                        }
-                    }
-                    instructions::AUIPC_MATCH => Ok(InstructionDecoded::AuiPc { rd, imm }),
-                    instructions::JALR_MATCH => Ok(InstructionDecoded::Jalr { rd, rs1, imm }),
-                    instructions::CSR_MATCH => {
-                        let imm = (self.inner() & 0xfff00000) >> 20;
-                        match self.funct3().ok_or("could not get funct3")? {
-                            instructions::csrrw::FUNCT3 => {
-                                Ok(InstructionDecoded::CsrRw { rd, rs1, imm })
-                            }
-                            instructions::csrrs::FUNCT3 => {
-                                Ok(InstructionDecoded::CsrRs { rd, rs1, imm })
-                            }
-                            instructions::csrrc::FUNCT3 => {
-                                Ok(InstructionDecoded::CsrRc { rd, rs1, imm })
-                            }
-                            instructions::csrrwi::FUNCT3 => {
-                                Ok(InstructionDecoded::CsrRwi { rd, rs1, imm })
-                            }
-                            instructions::csrrsi::FUNCT3 => {
-                                Ok(InstructionDecoded::CsrRsi { rd, rs1, imm })
-                            }
-
-                            instructions::ecall::FUNCT3 => match self
-                                .immediate1()
-                                .ok_or("could not get immediate1")?
-                            {
-                                0 => Ok(InstructionDecoded::ECall),
-                                1 => Ok(InstructionDecoded::EBreak),
-                                _ => Err(format!("Unknown immediate1 value for IType instruction")),
-                            },
-
-                            _ => Err(format!("Unknown funct3 value for IType instruction")),
-                        }
-                    }
-                    op => Err(format!("Unknown opcode for IType instruction: {:#X}", op)),
-                }
-            }
-            InstructionFormat::RType => {
-                let rd = self.rd().unwrap();
-                let rs1 = self.rs1().unwrap();
-                let rs2 = self.rs2().unwrap();
-                match self.opcode() {
-                    instructions::ARITMETIC_REGISTER_MATCH => {
-                        let (f3, f7) = (self.funct3().ok_or("could not get funct3")?, self.funct7().ok_or("could not get funct7")?);
-                        match (f3, f7) {
-                            (instructions::add::FUNCT3, instructions::add::FUNCT7) => Ok(InstructionDecoded::Add { rd, rs1, rs2 }),
-                            (instructions::sub::FUNCT3, instructions::sub::FUNCT7) => Ok(InstructionDecoded::Sub { rd, rs1, rs2 }),
-                            (instructions::sll::FUNCT3, 0) =>  Ok(InstructionDecoded::Sll { rd, rs1, rs2 }),
-                            (instructions::slt::FUNCT3, 0) =>  Ok(InstructionDecoded::Slt { rd, rs1, rs2 }),
-                            (instructions::sltu::FUNCT3, 0) => Ok(InstructionDecoded::Sltu { rd, rs1, rs2 }),
-                            (instructions::xor::FUNCT3, 0) =>  Ok(InstructionDecoded::Xor { rd, rs1, rs2 }),
-                            (instructions::srl::FUNCT3, instructions::srl::FUNCT7) => Ok(InstructionDecoded::Srl { rd, rs1, rs2 }),
-                            (instructions::sra::FUNCT3, instructions::sra::FUNCT7) => Ok(InstructionDecoded::Sra { rd, rs1, rs2 }),
-                            (instructions::or::FUNCT3, 0) =>  Ok(InstructionDecoded::Or { rd, rs1, rs2 }),
-                            (instructions::and::FUNCT3, 0) => Ok(InstructionDecoded::And { rd, rs1, rs2 }),
-
-                            (instructions::mul::FUNCT3, instructions::mul::FUNCT7) => Ok(InstructionDecoded::Mul { rd, rs1, rs2 }),
-                            (instructions::mulh::FUNCT3, instructions::mulh::FUNCT7) => Ok(InstructionDecoded::Mulh { rd, rs1, rs2 }),
-                            (instructions::mulsu::FUNCT3, instructions::mulsu::FUNCT7) => Ok(InstructionDecoded::Mulsu { rd, rs1, rs2 }),
-                            (instructions::mulu::FUNCT3, instructions::mulu::FUNCT7) => Ok(InstructionDecoded::Mulu { rd, rs1, rs2 }),
-                            (instructions::div::FUNCT3, instructions::div::FUNCT7) => Ok(InstructionDecoded::Div { rd, rs1, rs2 }),
-                            (instructions::divu::FUNCT3, instructions::divu::FUNCT7) => Ok(InstructionDecoded::Divu { rd, rs1, rs2 }),
-                            (instructions::rem::FUNCT3, instructions::rem::FUNCT7) => Ok(InstructionDecoded::Rem { rd, rs1, rs2 }),
-                            (instructions::remu::FUNCT3, instructions::remu::FUNCT7) => Ok(InstructionDecoded::Remu { rd, rs1, rs2 }),
-
-                            _ => Err(format!("Unknown funct3 value for RType instruction")),
-                        }
-                    }
-                    _ => Err(format!("Unknown opcode for RType instruction")),
-                }
-            }
-            InstructionFormat::SType => {
-                let rs1 = self.rs1().unwrap();
-                let rs2 = self.rs2().unwrap();
-                let imm = self.immediate1().unwrap();
-
-                match self.opcode() {
-                    instructions::STORE_MATCH => match self
-                        .funct3()
-                        .ok_or("could not get funct3")?
-                    {
-                        instructions::sb::FUNCT3 => Ok(InstructionDecoded::Sb { rs1, rs2, imm }),
-                        instructions::sh::FUNCT3 => Ok(InstructionDecoded::Sh { rs1, rs2, imm }),
-                        instructions::sw::FUNCT3 => Ok(InstructionDecoded::Sw { rs1, rs2, imm }),
-                        instructions::sd::FUNCT3 => Err(format!("Unsuppored SD instruction (64 bit ONLY)")),
-                        _ => Err(format!("Unknown funct3 value for SType instruction")),
-                    },
-                    _ => Err(format!("Unknown opcode for SType instruction")),
-                }
-            }
-            InstructionFormat::UType => {
-                let rd = self.rd().unwrap();
-                let imm = self.immediate1().unwrap();
-                match self.opcode() {
-                    instructions::LUI_MATCH => Ok(InstructionDecoded::Lui { rd, imm }),
-                    _ => Err(format!("Unknown opcode for UType instruction")),
-                }
-            }
-            InstructionFormat::SBType => {
-                let rs1 = self.rs1().unwrap();
-                let rs2 = self.rs2().unwrap();
-                let imm = self.immediate1().unwrap();
-                match self.opcode() {
-                    instructions::BRANCH_MATCH => match self
-                        .funct3()
-                        .ok_or("could not get funct3")?
-                    {
-                        instructions::beq::FUNCT3 => Ok(InstructionDecoded::Beq { rs1, rs2, imm }),
-                        instructions::bne::FUNCT3 => Ok(InstructionDecoded::Bne { rs1, rs2, imm }),
-                        instructions::blt::FUNCT3 => Ok(InstructionDecoded::Blt { rs1, rs2, imm }),
-                        instructions::bge::FUNCT3 => Ok(InstructionDecoded::Bge { rs1, rs2, imm }),
-                        instructions::bltu::FUNCT3 => Ok(InstructionDecoded::Bltu { rs1, rs2, imm }),
-                        instructions::bgeu::FUNCT3 => Ok(InstructionDecoded::Bgeu { rs1, rs2, imm }),
-                        _ => Err(format!("Unknown funct3 value for SBType instruction")),
-                    },
-                    _ => Err(format!("Unknown opcode for SBType instruction")),
-                }
-            }
-            InstructionFormat::JType => {
-                let rd = self.rd().unwrap();
-                let imm1 = self.immediate1().unwrap();
-                let imm2 = self.immediate2().unwrap();
-                let imm3 = self.immediate3().unwrap();
-                match self.opcode() {
-                    instructions::JUMP_MATCH => Ok(InstructionDecoded::Jal { rd, imm1, imm2, imm3 }),
-                    _ => Err(format!("Unknown opcode for JType instruction")),
-                }
-            }
-        }
+pub fn decode(inst: InstructionSize) -> Result<InstructionDecoded, DecodeError> {
+    if is_compressed(inst) {
+        try_decode_compressed(inst)
+    } else {
+        try_decode(inst)
     }
 }
 
-impl TryFrom<InstructionSize> for Instruction {
-    type Error = String;
-    fn try_from(value: InstructionSize) -> Result<Self, Self::Error> {
-        let format = InstructionFormat::try_from(value)?;
-        Ok(Self::make(value, format))
-    }
+pub fn try_decode_compressed(inst: InstructionSize) -> Result<InstructionDecoded, DecodeError> {
+    todo!()
 }
 
-impl TryFrom<InstructionSize> for InstructionFormat {
-    type Error = String;
-    fn try_from(value: InstructionSize) -> Result<Self, Self::Error> {
-        match value & OPCODE_MASK {
-            instructions::ARITMETIC_IMMEDIATE_MATCH => Ok(InstructionFormat::IType),
-            instructions::ARITMETIC_REGISTER_MATCH => Ok(InstructionFormat::RType),
-            instructions::STORE_MATCH => Ok(InstructionFormat::SType),
-            instructions::LUI_MATCH => Ok(InstructionFormat::UType),
-            instructions::AUIPC_MATCH => Ok(InstructionFormat::UType),
-            instructions::LOAD_MATCH => Ok(InstructionFormat::IType),
-            instructions::FENCE_MATCH => Ok(InstructionFormat::IType),
-            instructions::BRANCH_MATCH => Ok(InstructionFormat::SBType),
-            instructions::JUMP_MATCH => Ok(InstructionFormat::JType),
-            instructions::CSR_MATCH => Ok(InstructionFormat::IType),
-            v => Err(format!(
-                "Unknown InstructionFormat for opcode {:#X} (value = {:#X})",
-                v, value
-            )),
+pub fn try_decode(inst: InstructionSize) -> Result<InstructionDecoded, DecodeError> {
+    const OPCODE_MASK: InstructionSize = 0b1111111;
+
+    let fmt = match inst & OPCODE_MASK {
+        instructions::ARITMETIC_REGISTER_MATCH =>  InstructionFormat::RType,
+        instructions::STORE_MATCH =>               InstructionFormat::SType,
+        instructions::BRANCH_MATCH =>              InstructionFormat::BType,
+        instructions::JAL_MATCH =>                 InstructionFormat::JType,
+        instructions::ARITMETIC_IMMEDIATE_MATCH |
+        instructions::FENCE_MATCH |
+        instructions::LOAD_MATCH |
+        instructions::CSR_MATCH |
+        instructions::JALR_MATCH =>                InstructionFormat::IType,
+        instructions::LUI_MATCH |
+        instructions::AUIPC_MATCH =>               InstructionFormat::UType,
+        v => Err(DecodeError::UnknownInstructionFormat(format!("Unknown InstructionFormat for instruction: {:#X}({:#X})", inst, v)))?,
+    };
+
+    let inst = match fmt {
+        InstructionFormat::RType => {
+            let rinst = rtype::RType::new(inst);
+            match (rinst.funct3(), rinst.funct7()) {
+                (instructions::add::FUNCT3, instructions::add::FUNCT7) => InstructionDecoded::Add {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::sub::FUNCT3, instructions::sub::FUNCT7) => InstructionDecoded::Sub {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::sll::FUNCT3, instructions::sll::FUNCT7) => InstructionDecoded::Sll {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::slt::FUNCT3, instructions::slt::FUNCT7) => InstructionDecoded::Slt {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::sltu::FUNCT3, instructions::sltu::FUNCT7) => InstructionDecoded::Sltu {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::xor::FUNCT3, instructions::xor::FUNCT7) => InstructionDecoded::Xor {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::srl::FUNCT3, instructions::srl::FUNCT7) => InstructionDecoded::Srl {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::sra::FUNCT3, instructions::sra::FUNCT7) => InstructionDecoded::Sra {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::or::FUNCT3, instructions::or::FUNCT7) => InstructionDecoded::Or {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                (instructions::and::FUNCT3, instructions::and::FUNCT7) => InstructionDecoded::And {
+                    rd: rinst.rd(),
+                    rs1: rinst.rs1(),
+                    rs2: rinst.rs2(),
+                },
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown R-Type instruction: {:#X}", inst)))?
+            }
         }
+        InstructionFormat::IType => {
+            let iinst = itype::IType::new(inst);
+            match (iinst.opcode(), iinst.funct3(), iinst.imm1() as InstructionSize) {
+                (instructions::LOAD_MATCH, instructions::lb::FUNCT3, _) => InstructionDecoded::Lb {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::LOAD_MATCH, instructions::lh::FUNCT3, _) => InstructionDecoded::Lh {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::LOAD_MATCH, instructions::lw::FUNCT3, _) => InstructionDecoded::Lw {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::LOAD_MATCH, instructions::lbu::FUNCT3, _) => InstructionDecoded::Lbu {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::LOAD_MATCH, instructions::lhu::FUNCT3, _) => InstructionDecoded::Lhu {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::addi::FUNCT3, _) => InstructionDecoded::Addi {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::slli::FUNCT3, _) => InstructionDecoded::Slli {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::slti::FUNCT3, _) => InstructionDecoded::Slti {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::sltiu::FUNCT3, _) => InstructionDecoded::Sltiu {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::xori::FUNCT3, _) => InstructionDecoded::Xori {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::srli::FUNCT3, 0) => InstructionDecoded::Srli {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::srai::FUNCT3, 32) => InstructionDecoded::Srai {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::ori::FUNCT3, _) => InstructionDecoded::Ori {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::ARITMETIC_IMMEDIATE_MATCH, instructions::andi::FUNCT3, _) => InstructionDecoded::Andi {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::JALR_MATCH, 0 /* f3 must be zero */, _) => InstructionDecoded::Jalr {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+
+                (instructions::CSR_MATCH, instructions::csrrw::FUNCT3, _) => InstructionDecoded::CsrRw {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::CSR_MATCH, instructions::csrrs::FUNCT3, _) => InstructionDecoded::CsrRs {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::CSR_MATCH, instructions::csrrc::FUNCT3, _) => InstructionDecoded::CsrRc {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::CSR_MATCH, instructions::csrrwi::FUNCT3, _) => InstructionDecoded::CsrRwi {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::CSR_MATCH, instructions::csrrsi::FUNCT3, _) => InstructionDecoded::CsrRsi {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+                (instructions::CSR_MATCH, instructions::csrrci::FUNCT3, _) => InstructionDecoded::CsrRci {
+                    rd: iinst.rd(),
+                    rs1: iinst.rs1(),
+                    imm: iinst.imm1() as InstructionSize,
+                },
+
+                (instructions::CSR_MATCH, instructions::ecall::FUNCT3, instructions::ecall::FUNCT7) => InstructionDecoded::ECall,
+                (instructions::CSR_MATCH, instructions::ebreak::FUNCT3, instructions::ebreak::FUNCT7) => InstructionDecoded::EBreak,
+                (instructions::CSR_MATCH, instructions::sret::FUNCT3, instructions::sret::FUNCT7) => InstructionDecoded::SRet,
+                (instructions::CSR_MATCH, instructions::mret::FUNCT3, instructions::mret::FUNCT7) => InstructionDecoded::MRet,
+                (instructions::CSR_MATCH, instructions::sfence_vma::FUNCT3, instructions::sfence_vma::FUNCT7) => InstructionDecoded::SFenceVma,
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown I-Type instruction: {:#X}", inst)))?
+            }
+        }
+        InstructionFormat::SType => {
+            let sinst = stype::SType::new(inst);
+            match sinst.funct3() {
+                instructions::sb::FUNCT3 => InstructionDecoded::Sb {
+                    rs1: sinst.rs1(),
+                    rs2: sinst.rs2(),
+                    imm: sinst.imm(),
+                },
+                instructions::sh::FUNCT3 => InstructionDecoded::Sh {
+                    rs1: sinst.rs1(),
+                    rs2: sinst.rs2(),
+                    imm: sinst.imm(),
+                },
+                instructions::sw::FUNCT3 => InstructionDecoded::Sw {
+                    rs1: sinst.rs1(),
+                    rs2: sinst.rs2(),
+                    imm: sinst.imm(),
+                },
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown S-Type instruction: {:#X}", inst)))?
+            }
+        }
+        InstructionFormat::UType => {
+            let uinst = utype::UType::new(inst);
+            match uinst.opcode() {
+                instructions::lui::OPCODE => InstructionDecoded::Lui {
+                    rd: uinst.rd(),
+                    imm: uinst.imm1() as InstructionSize,
+                },
+                instructions::auipc::OPCODE => InstructionDecoded::AuiPc {
+                    rd: uinst.rd(),
+                    imm: uinst.imm1() as InstructionSize,
+                },
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown U-Type instruction: {:#X}", inst)))?
+            }
+        }
+        InstructionFormat::BType => {
+            let binst = btype::BType::new(inst);
+            match binst.funct3() {
+                instructions::beq::FUNCT3 => InstructionDecoded::Beq {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                instructions::bne::FUNCT3 => InstructionDecoded::Bne {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                instructions::blt::FUNCT3 => InstructionDecoded::Blt {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                instructions::bge::FUNCT3 => InstructionDecoded::Bge {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                instructions::bltu::FUNCT3 => InstructionDecoded::Bltu {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                instructions::bgeu::FUNCT3 => InstructionDecoded::Bgeu {
+                    rs1: binst.rs1(),
+                    rs2: binst.rs2(),
+                    imm: binst.imm1() as InstructionSize | binst.imm2() as InstructionSize,
+                },
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown B-Type instruction: {:#X}", inst)))?
+            }
+        }
+        InstructionFormat::JType => {
+            let jinst = jtype::JType::new(inst);
+            match jinst.opcode() {
+                instructions::jal::OPCODE => InstructionDecoded::Jal {
+                    rd: jinst.rd(),
+                    imm: jinst.imm() as InstructionSize,
+                },
+                _ => Err(DecodeError::UnknownInstruction(format!("Unknown J-Type instruction: {:#X}", inst)))?
+            }
+        }
+    };
+
+    Ok(inst)
+}
+
+pub mod compressed {
+    use crate::instruction_sets::rv32i::InstructionSize;
+
+    pub type CompressedSize = u16;
+
+    pub fn is_compressed(inst: InstructionSize) -> bool {
+        const COMPRESSED_MASK: CompressedSize = 0b11;
+        match (inst & 0xFFFF) as u16 & COMPRESSED_MASK {
+            0 | 1 | 2 => true,
+            _ => false,
+        }
+    }
+
+    pub mod crtype {
+        use super::CompressedSize;
+        use bitfield::bitfield;
+
+        bitfield! {
+            pub struct CRType(CompressedSize);
+            impl Debug;
+            pub opcode, _: 1, 0;
+            rs2, _: 6, 2; // must be 0
+            rs1, _: 11, 7; // rs1 != 0
+            pub funct4, _: 15, 12;
+        }
+
+        impl CRType {
+            pub fn new(inst: CompressedSize) -> Self {
+                Self(inst)
+            }
+        }
+
+        #[test]
+        fn crtype() {
+            let inst = CRType(0x8602 /* c.jr x12 */);
+            assert_eq!(inst.opcode(), 2);
+            assert_eq!(inst.funct4(), 8);
+            assert_eq!(inst.rs1(), 12);
+            assert_eq!(inst.rs2(), 0);
+        }
+    }
+
+    pub mod csstype {
+        // TODO: Implement compressed S-Type
+    }
+
+    pub mod cwitype {
+        // TODO: Implement compressed W-Type
+    }
+
+    pub mod citype {
+        // TODO: Implement compressed I-Type
+    }
+
+    pub mod cjtype {
+        // TODO: Implement compressed J-Type
+    }
+
+    pub mod cbtype {
+        // TODO: Implement compressed B-Type
+    }
+
+    pub mod cltype {
+        // TODO: Implement compressed L-Type
+    }
+
+    pub mod cstype {
+        // TODO: Implement cs-type
     }
 }
 
 #[allow(dead_code)]
 pub mod instructions {
-    use super::{Instruction, InstructionBuilder, InstructionFormat, InstructionSize};
+    use super::{InstructionSize, InstructionBuilder};
 
     pub const LOAD_MATCH: InstructionSize = 3;
     pub const FENCE_MATCH: InstructionSize = 15;
@@ -571,69 +431,13 @@ pub mod instructions {
     pub const STORE_MATCH: InstructionSize = 35;
     pub const ARITMETIC_REGISTER_MATCH: InstructionSize = 51;
     pub const BRANCH_MATCH: InstructionSize = 99;
-    pub const JUMP_MATCH: InstructionSize = 103;
     pub const CSR_MATCH: InstructionSize = 115;
     pub const JALR_MATCH: InstructionSize = 103;
-
-    #[derive(Debug)]
-    pub struct ConstInstruction<
-        const OPCODE: InstructionSize,
-        const FUNCT3: InstructionSize,
-        const FUNCT7: InstructionSize,
-    >(InstructionFormat);
-
-    impl<const O: InstructionSize, const F3: InstructionSize, const F7: InstructionSize>
-        ConstInstruction<O, F3, F7>
-    {
-        pub const fn new(type_: InstructionFormat) -> Self {
-            Self(type_)
-        }
-
-        pub fn encode<FN: FnOnce(InstructionBuilder) -> InstructionBuilder>(
-            self,
-            build: FN,
-        ) -> Instruction {
-            let builder = InstructionBuilder::builder()
-                .opcode(O)
-                .funct3(F3)
-                .funct7(F7);
-            let inst = build(builder).build();
-
-            Instruction::make(inst, self.0)
-        }
-
-        pub fn to_inst(self) -> Instruction {
-            let inst = InstructionBuilder::builder()
-                .opcode(O)
-                .funct3(F3)
-                .funct7(F7)
-                .build();
-            Instruction::make(inst, self.0)
-        }
-
-        pub const fn to_inner(self) -> InstructionSize {
-            let inst = InstructionBuilder::builder()
-                .opcode(O)
-                .funct3(F3)
-                .funct7(F7)
-                .build();
-            Instruction::make(inst, self.0).to_inner()
-        }
-
-        pub fn opcode(self) -> InstructionSize {
-            O
-        }
-        pub fn funct3(self) -> InstructionSize {
-            F3
-        }
-        pub fn funct7(self) -> InstructionSize {
-            F7
-        }
-    }
+    pub const JAL_MATCH: InstructionSize = 111;
+    pub const ATOMIC_MATCH: InstructionSize = 47;
 
     macro_rules! instruction {
         ($name:ident => $name_upper:ident($opcode:expr, $f3:expr, $f7:expr)[$ty:expr]) => {
-            pub const $name_upper: ConstInstruction<$opcode, $f3, $f7> = ConstInstruction::new($ty);
             pub mod $name {
                 use super::*;
                 pub const INST_BASE: InstructionSize = InstructionBuilder::builder()
@@ -646,17 +450,28 @@ pub mod instructions {
                 pub const FUNCT7: InstructionSize = $f7;
             }
         };
+        ($name:ident => $name_upper:ident($opcode:expr, $f3:expr, $f7:expr)[$ty:expr] { $($b:tt)* }) => {
+            pub mod $name {
+                use super::*;
+                pub const INST_BASE: InstructionSize = InstructionBuilder::builder()
+                    .opcode(OPCODE)
+                    .funct3(FUNCT3)
+                    .funct7(FUNCT7)
+                    .build();
+                pub const OPCODE: InstructionSize = $opcode;
+                pub const FUNCT3: InstructionSize = $f3;
+                pub const FUNCT7: InstructionSize = $f7;
+
+                $($b)*
+            }
+        };
     }
 
     instruction!(lb => LB(LOAD_MATCH, 0, 0)[InstructionFormat::IType]);
     instruction!(lh => LH(LOAD_MATCH, 1, 0)[InstructionFormat::IType]);
     instruction!(lw => LW(LOAD_MATCH, 2, 0)[InstructionFormat::IType]);
-    instruction!(ld => LD(LOAD_MATCH, 3, 0)[InstructionFormat::IType]);
     instruction!(lbu => LBU(LOAD_MATCH, 4, 0)[InstructionFormat::IType]);
     instruction!(lhu => LHU(LOAD_MATCH, 5, 0)[InstructionFormat::IType]);
-    instruction!(lwu => LWU(LOAD_MATCH, 6, 0)[InstructionFormat::IType]);
-    instruction!(fence => FENCE(FENCE_MATCH, 0, 0)[InstructionFormat::IType]);
-    instruction!(fence_i => FENCE_I(FENCE_MATCH, 1, 0)[InstructionFormat::IType]);
     instruction!(addi => ADDI(ARITMETIC_IMMEDIATE_MATCH, 0, 0)[InstructionFormat::IType]);
     instruction!(slli => SLLI(ARITMETIC_IMMEDIATE_MATCH, 1, 0)[InstructionFormat::IType]);
     instruction!(slti => SLTI(ARITMETIC_IMMEDIATE_MATCH, 2, 0)[InstructionFormat::IType]);
@@ -670,7 +485,6 @@ pub mod instructions {
     instruction!(sb => SB(STORE_MATCH, 0, 0)[InstructionFormat::SType]);
     instruction!(sh => SH(STORE_MATCH, 1, 0)[InstructionFormat::SType]);
     instruction!(sw => SW(STORE_MATCH, 2, 0)[InstructionFormat::SType]);
-    instruction!(sd => SD(STORE_MATCH, 3, 0)[InstructionFormat::SType]);
     instruction!(add => ADD(ARITMETIC_REGISTER_MATCH, 0, 0)[InstructionFormat::RType]);
     instruction!(sub => SUB(ARITMETIC_REGISTER_MATCH, 0, 32)[InstructionFormat::RType]);
     instruction!(sll => SLL(ARITMETIC_REGISTER_MATCH, 1, 0)[InstructionFormat::RType]);
@@ -687,21 +501,58 @@ pub mod instructions {
     instruction!(sllw => SLLW(ARITMETIC_REGISTER_MATCH, 1, 0)[InstructionFormat::RType]);
     instruction!(srlw => SRLW(ARITMETIC_REGISTER_MATCH, 5, 0)[InstructionFormat::RType]);
     instruction!(sraw => SRAW(ARITMETIC_REGISTER_MATCH, 5, 32)[InstructionFormat::RType]);
-    instruction!(beq => BEQ(BRANCH_MATCH, 0, 0)[InstructionFormat::SBType]);
-    instruction!(bne => BNE(BRANCH_MATCH, 1, 0)[InstructionFormat::SBType]);
-    instruction!(blt => BLT(BRANCH_MATCH, 4, 0)[InstructionFormat::SBType]);
-    instruction!(bge => BGE(BRANCH_MATCH, 5, 0)[InstructionFormat::SBType]);
-    instruction!(bltu => BLTU(BRANCH_MATCH, 6, 0)[InstructionFormat::SBType]);
-    instruction!(bgeu => BGEU(BRANCH_MATCH, 7, 0)[InstructionFormat::SBType]);
-    instruction!(jalr => JALR(JUMP_MATCH, 0, 0)[InstructionFormat::IType]);
-    instruction!(jal => JAL(JUMP_MATCH, 0, 0)[InstructionFormat::JType]);
+    instruction!(beq => BEQ(BRANCH_MATCH, 0, 0)[InstructionFormat::SType]);
+    instruction!(bne => BNE(BRANCH_MATCH, 1, 0)[InstructionFormat::SType]);
+    instruction!(blt => BLT(BRANCH_MATCH, 4, 0)[InstructionFormat::SType]);
+    instruction!(bge => BGE(BRANCH_MATCH, 5, 0)[InstructionFormat::SType]);
+    instruction!(bltu => BLTU(BRANCH_MATCH, 6, 0)[InstructionFormat::SType]);
+    instruction!(bgeu => BGEU(BRANCH_MATCH, 7, 0)[InstructionFormat::SType]);
+    instruction!(jalr => JALR(JALR_MATCH, 0, 0)[InstructionFormat::IType]);
+    instruction!(jal => JAL(JAL_MATCH, 0, 0)[InstructionFormat::JType]);
+
     instruction!(ecall => ECALL(CSR_MATCH, 0, 0)[InstructionFormat::IType]);
     instruction!(ebreak => EBREAK(CSR_MATCH, 0, 1)[InstructionFormat::IType]);
+    /* Why couldnt i find this in the RiscV ISA? ID```F*CKIN```K! */
+    instruction!(sret => SRET(CSR_MATCH, 0, 2)[InstructionFormat::IType]);
+    instruction!(mret => MRET(CSR_MATCH, 0, 3)[InstructionFormat::IType]);
+    instruction!(sfence_vma => SFENCE_VMA(CSR_MATCH, 0, 9)[InstructionFormat::IType]);
+
     instruction!(csrrw => CSRRW(CSR_MATCH, 1, 0)[InstructionFormat::IType]);
     instruction!(csrrs => CSRRS(CSR_MATCH, 2, 0)[InstructionFormat::IType]);
     instruction!(csrrc => CSRRC(CSR_MATCH, 3, 0)[InstructionFormat::IType]);
-    instruction!(csrrwi => CSRRWI(CSR_MATCH, 4, 0)[InstructionFormat::IType]);
-    instruction!(csrrsi => CSRRSI(CSR_MATCH, 5, 0)[InstructionFormat::IType]);
+    instruction!(csrrwi => CSRRWI(CSR_MATCH, 5, 0)[InstructionFormat::IType]);
+    instruction!(csrrsi => CSRRSI(CSR_MATCH, 6, 0)[InstructionFormat::IType]);
+    instruction!(csrrci => CSRRCI(CSR_MATCH, 7, 0)[InstructionFormat::IType]);
+
+    instruction!(fence => FENCE(FENCE_MATCH, 0, 0)[InstructionFormat::IType]);
+    instruction!(fence_i => FENCE_I(FENCE_MATCH, 1, 0)[InstructionFormat::IType]);
+
+    // D Extension
+    instruction!(flw => FLW(LOAD_MATCH, 2, 2)[InstructionFormat::IType]);
+    instruction!(fld => FLD(LOAD_MATCH, 3, 3)[InstructionFormat::IType]);
+    instruction!(fsw => FSW(STORE_MATCH, 2, 2)[InstructionFormat::SType]);
+    instruction!(fsd => FSD(STORE_MATCH, 3, 3)[InstructionFormat::SType]);
+    instruction!(fmadd_s => FMADD_S(ARITMETIC_REGISTER_MATCH, 0, 0)[InstructionFormat::RType]);
+    instruction!(fmsub_s => FMSUB_S(ARITMETIC_REGISTER_MATCH, 0, 1)[InstructionFormat::RType]);
+    instruction!(fnmsub_s => FNMSUB_S(ARITMETIC_REGISTER_MATCH, 0, 2)[InstructionFormat::RType]);
+    instruction!(fnmadd_s => FNMADD_S(ARITMETIC_REGISTER_MATCH, 0, 3)[InstructionFormat::RType]);
+    instruction!(fadd_s => FADD_S(ARITMETIC_REGISTER_MATCH, 0, 0)[InstructionFormat::RType]);
+    instruction!(fsub_s => FSUB_S(ARITMETIC_REGISTER_MATCH, 0, 1)[InstructionFormat::RType]);
+    instruction!(fmul_s => FMUL_S(ARITMETIC_REGISTER_MATCH, 0, 2)[InstructionFormat::RType]);
+    instruction!(fdiv_s => FDIV_S(ARITMETIC_REGISTER_MATCH, 0, 3)[InstructionFormat::RType]);
+    instruction!(fsqrt_s => FSQRT_S(ARITMETIC_REGISTER_MATCH, 0, 4)[InstructionFormat::RType]);
+    instruction!(fsgnj_s => FSGNJ_S(ARITMETIC_REGISTER_MATCH, 0, 5)[InstructionFormat::RType]);
+    instruction!(fsgnjn_s => FSGNJN_S(ARITMETIC_REGISTER_MATCH, 0, 6)[InstructionFormat::RType]);
+    instruction!(fsgnjx_s => FSGNJX_S(ARITMETIC_REGISTER_MATCH, 0, 7)[InstructionFormat::RType]);
+    instruction!(fmin_s => FMIN_S(ARITMETIC_REGISTER_MATCH, 0, 8)[InstructionFormat::RType]);
+    instruction!(fmax_s => FMAX_S(ARITMETIC_REGISTER_MATCH, 0, 9)[InstructionFormat::RType]);
+    instruction!(fcvt_w_s => FCVT_W_S(ARITMETIC_REGISTER_MATCH, 0, 10)[InstructionFormat::RType]);
+    instruction!(fcvt_wu_s => FCVT_WU_S(ARITMETIC_REGISTER_MATCH, 0, 11)[InstructionFormat::RType]);
+    instruction!(fmv_x_w => FMV_X_W(ARITMETIC_REGISTER_MATCH, 0, 12)[InstructionFormat::RType]);
+    instruction!(feq_s => FEQ_S(ARITMETIC_REGISTER_MATCH, 0, 13)[InstructionFormat::RType]);
+    instruction!(flt_s => FLT_S(ARITMETIC_REGISTER_MATCH, 0, 14)[InstructionFormat::RType]);
+    instruction!(fle_s => FLE_S(ARITMETIC_REGISTER_MATCH, 0, 15)[InstructionFormat::RType]);
+    instruction!(fclass_s => FCLASS(ARITMETIC_REGISTER_MATCH, 0, 16)[InstructionFormat::RType]);
 
     // M Extension
     instruction!(mul => MUL(ARITMETIC_REGISTER_MATCH, 0, 1)[InstructionFormat::RType]);
@@ -712,331 +563,247 @@ pub mod instructions {
     instruction!(divu => DIVU(ARITMETIC_REGISTER_MATCH, 5, 1)[InstructionFormat::RType]);
     instruction!(rem => REM(ARITMETIC_REGISTER_MATCH, 6, 1)[InstructionFormat::RType]);
     instruction!(remu => REMU(ARITMETIC_REGISTER_MATCH, 7, 1)[InstructionFormat::RType]);
+
+    // A Extension
+    instruction!(lrw => LRW(ARITMETIC_REGISTER_MATCH, 2, 8 /* its 8(0b0001000) b/c its the funct7 value rsht by 2 (first 2 bits are the rl, and aq) */)[InstructionFormat::RType] {
+        pub const FUNCT5: InstructionSize = FUNCT7 >> 2;
+    });
+    instruction!(scw => SCW(ARITMETIC_REGISTER_MATCH, 2, 12)[InstructionFormat::RType] {
+        pub const FUNCT5: InstructionSize = FUNCT7 >> 2;
+    });
+    instruction!(amoswapw => AMOSWAPW(ARITMETIC_REGISTER_MATCH, 2, 4)[InstructionFormat::RType] {
+        pub const FUNCT5: InstructionSize = FUNCT7 >> 2;
+    });
+    instruction!(amoaddw => AMOADDW(ARITMETIC_REGISTER_MATCH, 2, 0)[InstructionFormat::RType] {
+        pub const FUNCT5: InstructionSize = FUNCT7 >> 2;
+    });
+    instruction!(amoxorw => AMOXORW(ARITMETIC_REGISTER_MATCH, 2, 6)[InstructionFormat::RType] {
+        pub const FUNCT5: InstructionSize = FUNCT7 >> 2;
+    });
 }
-
-impl Instruction {
-    pub const fn to_inner(self) -> InstructionSize {
-        self.inst
-    }
-
-    pub fn inner(&self) -> InstructionSize {
-        self.inst
-    }
-
-    pub fn get_opcode(inst: InstructionSize) -> InstructionSize {
-        inst & OPCODE_MASK
-    }
-
-    pub fn opcode(&self) -> InstructionSize {
-        (self.inst & OPCODE_MASK) >> 0
-    }
-
-    pub fn rd(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::RType => Some((self.inst & rtype::RD_MASK) >> 7),
-            InstructionFormat::IType => Some((self.inst & itype::RD_MASK) >> 7),
-            InstructionFormat::UType => Some((self.inst & utype::RD_MASK) >> 7),
-            InstructionFormat::JType => Some((self.inst & jtype::RD_MASK) >> 7),
-            _ => None,
-        }
-    }
-
-    pub fn funct3(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::RType => Some((self.inst & rtype::FUNCT3_MASK) >> 12),
-            InstructionFormat::IType => Some((self.inst & itype::FUNCT3_MASK) >> 12),
-            InstructionFormat::SType => Some((self.inst & stype::FUNCT3_MASK) >> 12),
-            InstructionFormat::SBType => Some((self.inst & btype::FUNCT3_MASK) >> 12),
-            _ => None,
-        }
-    }
-
-    pub fn funct7(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::RType => Some((self.inst & rtype::FUNCT7_MASK) >> 25),
-            _ => None,
-        }
-    }
-
-    pub fn rs1(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::RType => Some((self.inst & rtype::RS1_MASK) >> 15),
-            InstructionFormat::IType => Some((self.inst & itype::RS1_MASK) >> 15),
-            InstructionFormat::SType => Some((self.inst & stype::RS1_MASK) >> 15),
-            InstructionFormat::SBType => Some((self.inst & btype::RS1_MASK) >> 15),
-            _ => None,
-        }
-    }
-
-    pub fn rs2(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::RType => Some((self.inst & rtype::RS2_MASK) >> 20),
-            InstructionFormat::SType => Some((self.inst & stype::RS2_MASK) >> 20),
-            InstructionFormat::SBType => Some((self.inst & btype::RS2_MASK) >> 20),
-            _ => None,
-        }
-    }
-
-    pub fn immediate1(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::IType =>  Some(((self.inst as i32 & itype::IMM1 as i32)  >> 20) as InstructionSize),
-            InstructionFormat::SType =>  Some(((self.inst as i32 & stype::IMM1 as i32)  >> 7) as InstructionSize),
-            InstructionFormat::UType =>  Some(((self.inst as i32 & utype::IMM1 as i32)  >> 12) as InstructionSize),
-            InstructionFormat::JType => Some(((self.inst as i32 & jtype::IMM1 as i32) >> 12) as InstructionSize),
-            InstructionFormat::SBType => Some(((self.inst as i32 & btype::IMM1 as i32) >> 7) as InstructionSize),
-            _ => None,
-        }
-    }
-
-    pub fn immediate2(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::SType => Some((self.inst & stype::IMM2) >> 25),
-            InstructionFormat::SBType => Some((self.inst & btype::IMM2) >> 25),
-            InstructionFormat::JType => Some((self.inst & jtype::IMM2) >> 20),
-            _ => None,
-        }
-    }
-
-    pub fn immediate3(&self) -> Option<InstructionSize> {
-        match self.format {
-            InstructionFormat::JType => Some((self.inst & jtype::IMM3) >> 21),
-            _ => None,
-        }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!(
-            "Instruction {{ format: {:#?}, inst: {{\n\tdec: {inst}\n\thex: 0x{inst:X}\n\tbin: 0b{inst:032b}\n}}\n}}",
-            self.format, inst = self.inst
-        )
-    }
-}
-
-#[test]
-fn addi_instruction() {
-    let instruction = Instruction::try_from(0x128293 /* addi t0, t0, 1 */).unwrap();
-    match instruction.format {
-        InstructionFormat::IType => (),
-        _ => panic!("Instruction SHOULD BE AN ITYPE!"),
-    }
-    for i in instruction.to_string().lines() {
-        println!("{i}");
-    }
-    assert_eq!(instruction.opcode(), 19);
-    assert_eq!(instruction.rd().unwrap(), 5);
-    assert_eq!(instruction.funct3().unwrap(), 0);
-    assert_eq!(instruction.rs1().unwrap(), 5);
-    assert_eq!(instruction.immediate1().unwrap(), 1);
-}
-
-#[test]
-fn write_value_into_x1() {
-    let instruction = Instruction::from(0x900093 /* addi x1, x0, 9 */);
-    match instruction.format {
-        InstructionFormat::IType => (),
-        _ => panic!("Instruction SHOULD BE AN ITYPE!"),
-    }
-    for i in instruction.to_string().lines() {
-        println!("{i}");
-    }
-    assert_eq!(instruction.opcode(), 19);
-    assert_eq!(instruction.rd().unwrap(), 1);
-    assert_eq!(instruction.funct3().unwrap(), 0);
-    assert_eq!(instruction.rs1().unwrap(), 0);
-    assert_eq!(instruction.immediate1().unwrap(), 9);
-
-    use crate::cpu::Cpu;
-    let mut cpu = Cpu::new();
-    cpu.load_program(&[instruction])
-        .expect("Failed to load Program");
-    cpu.execute().expect("Failed to execute inst");
-
-    // check that the register x1 has the value 9
-    let x1 = *cpu.get_register(1).unwrap();
-    assert_eq!(x1, 9);
-}
-
-#[test]
-fn add_instruction() {
-    let instruction = Instruction::try_from(0x00208233 /* add x4 x1 x2 */).unwrap();
-    match instruction.format {
-        InstructionFormat::RType => (),
-        _ => panic!(
-            "Instruction SHOULD BE AN RTYPE!\nInstead got {:?}",
-            instruction.format
-        ),
-    }
-    for i in instruction.to_string().lines() {
-        println!("{i}");
-    }
-    assert_eq!(instruction.opcode(), 51);
-    assert_eq!(instruction.rd().unwrap(), 4);
-    assert_eq!(instruction.funct3().unwrap(), 0);
-    assert_eq!(instruction.rs1().unwrap(), 1);
-    assert_eq!(instruction.rs2().unwrap(), 2);
-}
-
-pub const OPCODE_MASK: InstructionSize = self::internal::create_mask(7);
 
 pub mod rtype {
+    use bitfield::bitfield;
     use super::InstructionSize;
 
-    pub const RD_MASK: InstructionSize = super::internal::create_mask(5) << 7;
-    pub const FUNCT3_MASK: InstructionSize = super::internal::create_mask(3) << 12;
-    pub const RS1_MASK: InstructionSize = super::internal::create_mask(5) << 15;
-    pub const RS2_MASK: InstructionSize = super::internal::create_mask(5) << 20;
-    pub const FUNCT7_MASK: InstructionSize = super::internal::create_mask(7) << 25;
+    bitfield! {
+        pub struct RType(InstructionSize);
+        impl Debug;
+        InstructionSize;
+        pub opcode, _: 6, 0;
+        pub rd, _:     11, 7;
+        pub funct3, _: 14, 12;
+        pub rs1, _:    19, 15;
+        pub rs2, _:    24, 20;
+        pub funct7, _: 31, 25;
+    }
 
-    #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
-        println!("RD_MASK     = 0b{:032b}", RD_MASK);
-        println!("FUNCT3_MASK = 0b{:032b}", FUNCT3_MASK);
-        println!("RS1_MASK    = 0b{:032b}", RS1_MASK);
-        println!("RS2_MASK    = 0b{:032b}", RS2_MASK);
-        println!("FUNCT7_MASK = 0b{:032b}", FUNCT7_MASK);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
-        assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
-        assert_eq!(RS1_MASK, 0b00000000000011111000000000000000);
-        assert_eq!(RS2_MASK, 0b00000001111100000000000000000000);
-        assert_eq!(FUNCT7_MASK, 0b11111110000000000000000000000000);
+    impl RType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
     }
 }
 
 pub mod itype {
-    use super::InstructionSize;
+    use super::{InstructionSize, SignedInstructionSize};
+    use bitfield::bitfield;
 
-    pub const RD_MASK: InstructionSize = super::internal::create_mask(5) << 7;
-    pub const FUNCT3_MASK: InstructionSize = super::internal::create_mask(3) << 12;
-    pub const RS1_MASK: InstructionSize = super::internal::create_mask(5) << 15;
-    pub const IMM1: InstructionSize = super::internal::create_mask(12) << 20;
+    bitfield! {
+        pub struct IType(InstructionSize);
+        impl Debug;
+        pub opcode, _: 6, 0;
+        pub rd, _:     11, 7;
+        pub funct3, _: 14, 12;
+        pub rs1, _:    19, 15;
+        SignedInstructionSize;
+        pub imm1, _:   31, 20;
+    }
+
+    impl IType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
+    }
 
     #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:034b}", OPCODE_MASK);
-        println!("RD_MASK     = 0b{:034b}", RD_MASK);
-        println!("FUNCT3_MASK = 0b{:034b}", FUNCT3_MASK);
-        println!("RS1_MASK    = 0b{:034b}", RS1_MASK);
-        println!("IMM1        = 0b{:034b}", IMM1);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
-        assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
-        assert_eq!(RS1_MASK, 0b00000000000011111000000000000000);
-        assert_eq!(IMM1, 0b11111111111100000000000000000000);
+    fn imm_check() {
+        let inst = IType(0x06468613 /* addi x12 x13 100 */);
+        assert_eq!(inst.rd(), 12);
+        assert_eq!(inst.rs1(), 13);
+        assert_eq!(inst.imm1(), 100);
+    }
+
+    #[test]
+    fn instructions() {
+        let inst = IType(0x00411573 /* csrrw x10 x2 4 */);
+        assert_eq!(inst.rd(), 10);
+        assert_eq!(inst.rs1(), 2);
+        assert_eq!(inst.imm1(), 4);
+        let inst = IType(0x00c12603 /* lw x12, 12(sp) */);
+        assert_eq!(inst.rd(), 12);
+        assert_eq!(inst.rs1(), 2);
+        assert_eq!(inst.imm1(), 12);
+        let inst = IType(0x00c080e7 /* jalr x1, 12(ra) */);
+        assert_eq!(inst.rd(), 1);
+        assert_eq!(inst.rs1(), 1);
+        assert_eq!(inst.imm1(), 12);
     }
 }
 
 pub mod stype {
-    use super::InstructionSize;
+    use super::{InstructionSize, SignedInstructionSize};
+    use bitfield::bitfield;
 
-    pub const IMM1: InstructionSize = super::internal::create_mask(5) << 7;
-    pub const FUNCT3_MASK: InstructionSize = super::internal::create_mask(3) << 12;
-    pub const RS1_MASK: InstructionSize = super::internal::create_mask(5) << 15;
-    pub const RS2_MASK: InstructionSize = super::internal::create_mask(5) << 20;
-    pub const IMM2: InstructionSize = super::internal::create_mask(7) << 25;
+    bitfield! {
+        pub struct SType(InstructionSize);
+        impl Debug;
+        pub opcode, _: 6, 0;
+        pub imm1, _:   11, 7;
+        InstructionSize;
+        pub funct3, _: 14, 12;
+        pub rs1, _:    19, 15;
+        pub rs2, _:    24, 20;
+        SignedInstructionSize;
+        pub imm2, _:   31, 25;
+    }
+
+    impl SType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
+
+        pub fn imm(&self) -> InstructionSize {
+            self.imm1() | (self.imm2() << 5) as InstructionSize
+        }
+    }
 
     #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:034b}", OPCODE_MASK);
-        println!("IMM1        = 0b{:034b}", IMM1);
-        println!("FUNCT3_MASK = 0b{:034b}", FUNCT3_MASK);
-        println!("RS1_MASK    = 0b{:034b}", RS1_MASK);
-        println!("RS2_MASK    = 0b{:034b}", RS2_MASK);
-        println!("IMM2        = 0b{:034b}", IMM2);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(IMM1, 0b00000000000000000000111110000000);
-        assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
-        assert_eq!(RS1_MASK, 0b00000000000011111000000000000000);
-        assert_eq!(RS2_MASK, 0b00000001111100000000000000000000);
-        assert_eq!(IMM2, 0b11111110000000000000000000000000);
+    fn imm_check() {
+        let inst = SType(0x00112f23 /* sw ra, 30(sp) */);
+        assert_eq!(inst.rs1(), 2);
+        assert_eq!(inst.rs2(), 1);
+        assert_eq!(inst.imm(), 30);
     }
 }
 
 pub mod utype {
-    use super::InstructionSize;
+    use super::{InstructionSize, SignedInstructionSize};
+    use bitfield::bitfield;
 
-    pub const RD_MASK: InstructionSize = super::internal::create_mask(5) << 7;
-    pub const IMM1: InstructionSize = super::internal::create_mask(20) << 12;
+    bitfield! {
+        pub struct UType(InstructionSize);
+        impl Debug;
+        pub opcode, _: 6, 0;
+        pub rd, _:     11, 7;
+        SignedInstructionSize;
+        pub imm1, _:   31, 12;
+    }
 
-    #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
-        println!("RD_MASK     = 0b{:032b}", RD_MASK);
-        println!("IMM1        = 0b{:032b}", IMM1);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(RD_MASK, 0b00000000000000000000111110000000);
-        assert_eq!(IMM1, 0b11111111111111111111000000000000);
+    impl UType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
     }
 }
 
 // aims to mimic `mm[12|10:5] rs2 rs1 funct3 imm[4:1|11] opcode B-type` in the RISC-V spec
 pub mod btype {
-    use super::InstructionSize;
+    use super::{InstructionSize, SignedInstructionSize};
+    use bitfield::bitfield;
 
-    // should be imm[4:1|11] as it is in the spec
-    pub const IMM1: InstructionSize = super::internal::create_mask(1) << 7;
-    // the second part of the immediate (just after IMM1 and is the imm[4:1] portion)
-    pub const IMM2: InstructionSize = super::internal::create_mask(4) << 8;
-    // the funct3 portion of the instruction
-    pub const FUNCT3_MASK: InstructionSize = super::internal::create_mask(3) << 12;
-    // the first source register
-    pub const RS1_MASK: InstructionSize = super::internal::create_mask(5) << 15;
-    // the second source register
-    pub const RS2_MASK: InstructionSize = super::internal::create_mask(5) << 20;
-    // the imm[10:5] portion of the immediate
-    pub const IMM3: InstructionSize = super::internal::create_mask(6) << 25;
-    // the imm[12] portion of the immediate
-    pub const IMM4: InstructionSize = super::internal::create_mask(1) << 31;
+    bitfield! {
+        pub struct BType(InstructionSize);
+        impl Debug;
+        pub opcode, _: 6, 0;
+        pub imm1, _:   11, 7;
+        InstructionSize;
+        pub funct3, _: 14, 12;
+        pub rs1, _:    19, 15;
+        pub rs2, _:    24, 20;
+        SignedInstructionSize;
+        pub imm2, _:   31, 25;
+    }
+
+    impl BType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
+
+        pub fn imm(&self) -> InstructionSize {
+            self.imm1() | (self.imm2() << 5) as InstructionSize
+        }
+    }
 
     #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
-        println!("IMM1        = 0b{:032b}", IMM1);
-        println!("IMM2        = 0b{:032b}", IMM2);
-        println!("FUNCT3_MASK = 0b{:032b}", FUNCT3_MASK);
-        println!("RS1_MASK    = 0b{:032b}", RS1_MASK);
-        println!("RS2_MASK    = 0b{:032b}", RS2_MASK);
-        println!("IMM3        = 0b{:032b}", IMM3);
-        println!("IMM4        = 0b{:032b}", IMM4);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(IMM1,        0b00000000000000000000000010000000);
-        assert_eq!(IMM2,        0b00000000000000000000111100000000);
-        assert_eq!(FUNCT3_MASK, 0b00000000000000000111000000000000);
-        assert_eq!(RS1_MASK,    0b00000000000011111000000000000000);
-        assert_eq!(RS2_MASK,    0b00000001111100000000000000000000);
-        assert_eq!(IMM3,        0b01111110000000000000000000000000);
-        assert_eq!(IMM4,        0b10000000000000000000000000000000);
+    fn imm_check() {
+        let inst = BType(0x50A60463 /* beq x12 x10 1288 */);
+        assert_eq!(inst.rs1(), 12);
+        assert_eq!(inst.rs2(), 10);
+        assert_eq!(inst.imm(), 1288);
+        let inst = BType(0x00409663 /* bne x1 x4 12 */);
+        assert_eq!(inst.rs1(), 1);
+        assert_eq!(inst.rs2(), 4);
+        assert_eq!(inst.imm(), 12);
     }
 }
 
 pub mod jtype {
-    use super::InstructionSize;
+    use super::{internal, InstructionSize, SignedInstructionSize};
+    use bitfield::bitfield;
 
-    pub const RD_MASK: InstructionSize = super::internal::create_mask(5) << 7;
-    pub const IMM1: InstructionSize = super::internal::create_mask(8) << 12;
-    pub const IMM2: InstructionSize = super::internal::create_mask(1) << 20;
-    pub const IMM3: InstructionSize = super::internal::create_mask(10) << 21;
-    pub const IMM4: InstructionSize = super::internal::create_mask(1) << 31;
+    bitfield! {
+        pub struct JType(InstructionSize);
+        impl Debug;
+        pub opcode, _: 6, 0;
+        pub rd, _: 11, 7;
+    }
+
+    impl JType {
+        pub fn new(inst: InstructionSize) -> Self {
+            Self(inst)
+        }
+
+        fn imm1(&self) -> InstructionSize {
+            let imm = (internal::get_bit(self.0, 31) << 31) as SignedInstructionSize;
+            (imm >> 11) as InstructionSize
+        }
+
+        fn imm2(&self) -> InstructionSize {
+            internal::get_bits(self.0, 8, 12) << 12
+        }
+
+        fn imm3(&self) -> InstructionSize {
+            let imm = self.0 >> 9 /* now get bit 11 */;
+            internal::get_bit(imm, 11) << 11
+        }
+
+        fn imm4(&self) -> InstructionSize {
+            let imm = self.0 >> 20 /* now get bits 10:1 */;
+            internal::get_bits(imm, 10, 1) << 1
+        }
+
+        pub fn imm(&self) -> InstructionSize {
+            let (imm1, imm2, imm3, imm4) = (
+                self.imm1(), // imm[20]
+                self.imm2(), // imm[19:12]
+                self.imm3(), // imm[11]
+                self.imm4() // imm[10:1]
+            );
+            imm1 | imm2 | imm3 | imm4
+        }
+    }
 
     #[test]
-    pub fn bit_masks() {
-        use crate::instruction_sets::rv32i::OPCODE_MASK;
-        println!("OPCODE_MASK = 0b{:032b}", OPCODE_MASK);
-        println!("RD_MASK     = 0b{:032b}", RD_MASK);
-        println!("IMM1        = 0b{:032b}", IMM1);
-        println!("IMM2        = 0b{:032b}", IMM2);
-        println!("IMM3        = 0b{:032b}", IMM3);
-        assert_eq!(OPCODE_MASK, 0b00000000000000000000000001111111);
-        assert_eq!(RD_MASK,     0b00000000000000000000111110000000);
-        assert_eq!(IMM1,        0b00000000000011111111000000000000);
-        assert_eq!(IMM2,        0b00000000000100000000000000000000);
-        assert_eq!(IMM3,        0b01111111111000000000000000000000);
-        assert_eq!(IMM4,        0b10000000000000000000000000000000)
+    fn imm_check() {
+        let inst = JType(0x0100006f /* jal x0 16 */);
+        assert_eq!(inst.rd(), 0);
+        assert_eq!(inst.imm(), 16);
+        let inst = JType(0x84000EF /* JAL ra 132 (0b00001000010000000000000011101111) */);
+        assert_eq!(inst.rd(), 1);
+        assert_eq!(inst.imm(), 132);
+        let inst = JType(0xfb9ff0ef /* jal ra, -72 */);
+        assert_eq!(inst.rd(), 1);
+        assert_eq!(inst.imm() as SignedInstructionSize, -72);
     }
 }
