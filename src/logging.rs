@@ -1,7 +1,7 @@
 use colored::{Color, Colorize};
-use fern::{colors::ColoredLevelConfig, Dispatch};
+use fern::{colors::ColoredLevelConfig, Dispatch, Output};
 
-pub fn init_logging() {
+pub fn init_logging<T: Into<Output>>(output: T) {
     let colors = ColoredLevelConfig::new()
         .info(fern::colors::Color::Green)
         .debug(fern::colors::Color::Cyan)
@@ -24,7 +24,7 @@ pub fn init_logging() {
             ))
         })
         .level(log::LevelFilter::Debug)
-        .chain(std::io::stdout())
+        .chain(output)
         .apply()
         .unwrap();
 }

@@ -1,27 +1,27 @@
-use log::error;
 use riscv_vm::{cpu::Cpu, trap::Trap};
 
 pub fn main() {
+    riscv_vm::logging::init_logging(std::io::stdout());
+
     let program = include_bytes!("../../c_test/fib.bin");
-
-    riscv_vm::logging::init_logging();
-
     let mut cpu = Cpu::new();
-
     cpu.load_program_raw(program).expect("Failed to load program");
 
-    while !cpu.finished() {
+    cpu.disassemble("disasm.txt", cpu.get_pc(), cpu.get_pc() + program.len() as u32);
+
+    while !cpu.finished() /*&& cpu.get_pc() < riscv_vm::memory::dram::DRAM_BASE + 100*/ {
         match cpu.step() {
             Ok(_) => (),
             Err(e) => {
-                error!("Error PC: {:#X}", cpu.get_pc());
-                e.take_trap(&mut cpu);
+                log::error!("{:?}", e);
                 if e.is_fatal() {
-                    error!("Fatal trap: {:#X}", e.exception_code());
-                    error!("Exception: {e:#?}");
                     break;
                 }
+                e.take_trap(&mut cpu);
             }
         }
     }
+
+    // riscv_vm::logging::init_logging(std::io::stdout());
+    cpu.dump_registers();
 }

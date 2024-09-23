@@ -1,16 +1,14 @@
 [package]
 name = "riscv-vm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-
-[[bin]]
-name = "test_prog"
 
 [lib]
 crate-type = ["rlib"]
 
 [dependencies]
 bit_ops = "0.1.13"
+bitfield = "0.17.0"
 chrono = "0.4.38"
 colored = "2.1.0"
 fern = { version = "0.6.2", features = ["colored"] }
