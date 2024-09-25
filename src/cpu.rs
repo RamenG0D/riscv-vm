@@ -1,8 +1,15 @@
 use crate::{
-    bit_ops::zero_extend, bus::{Bus, Device, VirtualDevice}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, log_error, log_trace, memory::{
+    bit_ops::zero_extend,
+    bus::{Bus, VirtualDevice},
+    convert_memory,
+    csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS},
+    log_error, log_trace,
+    memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::Exception
+    },
+    registers::{FRegisters, XRegisterSize, XRegisters},
+    trap::Exception,
 };
 use riscv_decoder::{
     decoded_inst::InstructionDecoded,
@@ -13,7 +20,8 @@ use riscv_decoder::{
 // 32 bit RiscV CPU architecture
 pub struct Cpu {
     xregs: XRegisters,
-    fregs: FRegisters,
+    // TODO: Implement floating point instructions (which will use these registers)
+    _fregs: FRegisters,
 
     /// program counter
     pc: XRegisterSize,
@@ -32,19 +40,14 @@ impl Cpu {
     pub fn new() -> Self {
         log_trace!("Initializing CPU...");
         let mut registers = XRegisters::new();
-
         registers[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
 
         let cpu = Self {
             xregs: registers,
             fregs: FRegisters::new(),
-
             pc: DRAM_BASE as u32,
-
             mode: Mode::Machine,
-
             bus: Bus::new(),
-
             state: Csr::new(),
         };
         log_trace!("CPU initialized");
@@ -120,7 +123,10 @@ impl Cpu {
         if is_compressed(inst) {
             self.pc += 2;
             try_decode_compressed(inst).map_err(|e| {
-                log_error!("Failed to decode compressed instruction: {:#X} => {e:?}", inst);
+                log_error!(
+                    "Failed to decode compressed instruction: {:#X} => {e:?}",
+                    inst
+                );
                 Exception::IllegalInstruction
             })
         } else {

@@ -1,8 +1,10 @@
 use crate::{
-    log_error, memory::{
+    log_error,
+    memory::{
         dram::{Dram, Sizes, DRAM_BASE},
         virtual_memory::MemorySize,
-    }, trap::Exception
+    },
+    trap::Exception,
 };
 
 pub trait Device {
@@ -37,7 +39,12 @@ impl VirtualDevice {
         self.inner_device.load(addr, size)
     }
 
-    pub fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
+    pub fn store(
+        &mut self,
+        addr: MemorySize,
+        size: Sizes,
+        value: MemorySize,
+    ) -> Result<(), Exception> {
         self.inner_device.store(addr, size, value)
     }
 }

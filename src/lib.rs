@@ -48,8 +48,8 @@ pub mod logging {
     }
 
     pub fn init_logging<T: Into<crate::logging::fern::Output>>(output: T) {
+        use crate::logging::colored::{Color, Colorize};
         use crate::logging::fern::{colors::ColoredLevelConfig, Dispatch};
-        use crate::logging::colored::{Colorize, Color};
 
         let colors = ColoredLevelConfig::new()
             .info(fern::colors::Color::Green)
