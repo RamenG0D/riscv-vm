@@ -44,7 +44,7 @@ impl Cpu {
 
         let cpu = Self {
             xregs: registers,
-            fregs: FRegisters::new(),
+            _fregs: FRegisters::new(),
             pc: DRAM_BASE as u32,
             mode: Mode::Machine,
             bus: Bus::new(),
