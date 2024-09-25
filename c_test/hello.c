@@ -1,13 +1,15 @@
 
+void putstr(volatile char* uart, const char* str);
+
 int main() {
-    while(1) {
-        // uart is at 0x10000000 and is the UART device which allows us to print to the console
-        volatile char* uart = (volatile char*)0x10000000;
-        while ((uart[5] & 0x01) == 0);
-        char c = uart[0];
-        if ('a' <= c && c <= 'z') {
-            c = c + 'A' - 'a';
-        }
-        uart[0] = c;
+    // uart is at 0x10000000 and is the UART device which allows us to print to the console
+    volatile char* uart = (volatile char*)0x10000000;
+    const char* hello = "Hello, world!\n";
+    putstr(uart, hello);
+}
+
+void putstr(volatile char* uart, const char* str) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        uart[0] = str[i];
     }
 }

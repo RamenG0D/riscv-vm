@@ -17,10 +17,10 @@ impl<const L: usize> Memory<L> {
             return None;
         }
         Some(
-            self.array[index as usize] as MemorySize |
-            ((self.array[(index as usize) + 1] as MemorySize) << 8) |
-            ((self.array[(index as usize) + 2] as MemorySize) << 16) |
-            ((self.array[(index as usize) + 3] as MemorySize) << 24)
+            self.array[index as usize] as MemorySize
+                | ((self.array[(index as usize) + 1] as MemorySize) << 8)
+                | ((self.array[(index as usize) + 2] as MemorySize) << 16)
+                | ((self.array[(index as usize) + 3] as MemorySize) << 24),
         )
     }
 
@@ -28,7 +28,10 @@ impl<const L: usize> Memory<L> {
         if index + 1 > L as MemorySize {
             return None;
         }
-        Some((self.array[index as usize] as MemorySize | ((self.array[(index as usize) + 1] as MemorySize) << 8)) as u16)
+        Some(
+            (self.array[index as usize] as MemorySize
+                | ((self.array[(index as usize) + 1] as MemorySize) << 8)) as u16,
+        )
     }
 
     pub fn read8(&self, index: MemorySize) -> Option<u8> {
@@ -89,19 +92,18 @@ impl<const L: usize> HeapMemory<L> {
         if index + 3 > L as MemorySize {
             return Err(Exception::LoadAccessFault);
         }
-        Ok(
-            self.memory[index as usize] as MemorySize |
-            ((self.memory[(index as usize) + 1] as MemorySize) << 8) |
-            ((self.memory[(index as usize) + 2] as MemorySize) << 16) |
-            ((self.memory[(index as usize) + 3] as MemorySize) << 24)
-        )
+        Ok(self.memory[index as usize] as MemorySize
+            | ((self.memory[(index as usize) + 1] as MemorySize) << 8)
+            | ((self.memory[(index as usize) + 2] as MemorySize) << 16)
+            | ((self.memory[(index as usize) + 3] as MemorySize) << 24))
     }
 
     pub fn read16(&self, index: MemorySize) -> Result<u16, Exception> {
         if index + 1 > L as MemorySize {
             return Err(Exception::LoadAccessFault);
         }
-        Ok((self.memory[index as usize] as MemorySize | ((self.memory[(index as usize) + 1] as MemorySize) << 8)) as u16)
+        Ok((self.memory[index as usize] as MemorySize
+            | ((self.memory[(index as usize) + 1] as MemorySize) << 8)) as u16)
     }
 
     pub fn read8(&self, index: MemorySize) -> Result<u8, Exception> {

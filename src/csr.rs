@@ -1,4 +1,3 @@
-
 // Machine-level CSRs.
 /// Hardware thread ID.
 pub const MHARTID: usize = 0xf14;
@@ -24,6 +23,9 @@ pub const MCAUSE: usize = 0x342;
 pub const MTVAL: usize = 0x343;
 /// Machine interrupt pending.
 pub const MIP: usize = 0x344;
+// Machine trap setup.
+/// ISA and extensions.
+const MISA: usize = 0x301;
 
 // Supervisor-level CSRs.
 /// Supervisor status register.
@@ -53,13 +55,49 @@ pub enum Mode {
     Machine = 0b11,
 }
 
-pub struct State {
+pub struct Csr {
     csr: [u32; 4096],
 }
 
-impl State {
+impl Csr {
     pub fn new() -> Self {
-        Self { csr: [0; 4096] }
+        let mut csr = [0; 4096];
+
+        bitfield::bitfield! {
+            struct MisaFlags(u32);
+            impl new;
+            u32;
+            // whether or not xlen=32
+            xlen_val, xlen: 8, 8;
+            m, m_ext: 12, 12;
+            a, a_ext: 0, 0;
+            f, f_ext: 5, 5;
+            d, d_ext: 3, 3;
+            q, q_ext: 16, 16;
+            c, c_ext: 2, 2;
+            l, l_ext: 11, 11;
+            b, b_ext: 1, 1;
+            j, j_ext: 9, 9;
+            p, p_ext: 15, 15;
+            v, v_ext: 21, 21;
+            n, n_ext: 13, 13;
+            g, g_ext: 6, 6;
+            h, h_ext: 7, 7;
+            x, x_ext: 23, 23;
+            supervisor_val, supervisor: 18, 18;
+            user_val, user: 20, 20;
+        }
+        impl MisaFlags {
+            pub fn inner(&self) -> u32 {
+                self.0
+            }
+        }
+
+        let misa = MisaFlags::new(1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+
+        csr[MISA] = misa.inner();
+
+        Self { csr }
     }
 
     pub fn write_csr(&mut self, addr: usize, value: u32) -> Option<()> {

@@ -1,7 +1,11 @@
-use std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex};
 use log::error;
+use std::sync::{atomic::AtomicBool, Arc, Condvar, Mutex};
 
-use crate::{bus::Device, memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception};
+use crate::{
+    bus::Device,
+    memory::{dram::Sizes, virtual_memory::MemorySize},
+    trap::Exception,
+};
 
 /// The address which UART starts, same as QEMU virt machine.
 pub const UART_BASE: MemorySize = 0x1000_0000;
@@ -30,20 +34,25 @@ pub const UART_LSR_TX: u8 = 1 << 5;
 
 pub struct Uart {
     uart: Arc<(Mutex<[u8; UART_SIZE as usize]>, Condvar)>,
-    interrupting: Arc<AtomicBool>
+    interrupting: Arc<AtomicBool>,
 }
 
 impl Device for Uart {
+    #[inline(always)]
+    fn base(&self) -> MemorySize { UART_BASE }
+    #[inline(always)]
+    fn size(&self) -> MemorySize { UART_SIZE }
+
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         match size {
             Sizes::Byte => Ok(self.load8(addr)),
-            _ => Err(Exception::LoadAccessFault)
+            _ => Err(Exception::LoadAccessFault),
         }
     }
     fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
         match size {
             Sizes::Byte => Ok(self.store8(addr, value)),
-            _ => Err(Exception::StoreAMOAccessFault)
+            _ => Err(Exception::StoreAMOAccessFault),
         }
     }
 }
@@ -92,22 +101,19 @@ impl Uart {
                 uart[(UART_LSR - UART_BASE) as usize] &= !UART_LSR_RX;
                 uart[(UART_RHR - UART_BASE) as usize] as MemorySize
             }
-            _ => {
-                uart[addr as usize] as MemorySize
-            }
+            _ => uart[addr as usize] as MemorySize,
         }
     }
 
     fn store8(&mut self, addr: MemorySize, value: MemorySize) {
-        use std::io::Write;
         let (uart, _cvar) = &*self.uart;
         let mut uart = uart.lock().expect("failed to get an UART object");
         match addr {
             UART_THR => {
-                println!("{}", value as u8 as char);
-                std::io::stdout().flush().expect("failed to flush stdout");
+                print!("{}", value as u8 as char);
             }
             _ => {
+                let addr = addr - UART_BASE;
                 uart[addr as usize] = value as u8;
             }
         }

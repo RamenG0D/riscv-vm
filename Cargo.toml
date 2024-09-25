@@ -11,6 +11,8 @@ bit_ops = "0.1.13"
 bitfield = "0.17.0"
 chrono = "0.4.38"
 colored = "2.1.0"
-fern = { version = "0.6.2", features = ["colored"] }
 log = "0.4.22"
+fern = { version = "0.6.2", features = ["colored"] }
 
+[dependencies.riscv-decoder]
+git = "https://github.com/RamenG0D/riscv-decoder.git"

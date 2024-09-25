@@ -1,82 +1,32 @@
-use log::{debug, info, trace};
-
 use crate::{
-    bit_ops::zero_extend, bus::Bus, csr::{Mode, State, MEPC, MSTATUS, SEPC, SSTATUS}, instruction_sets::{instructions::InstructionDecoded, rv32i::{compressed::is_compressed, decode, try_decode, try_decode_compressed}}, memory::{
+    bit_ops::zero_extend, bus::{Bus, Device}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, devices::virtio::Virtio, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
     }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::Exception
 };
-
-// #[test]
-// pub fn fib_test() {
-//     let mut cpu = Cpu::new();
-
-//     println!("Loading program...");
-//     cpu.load_program_raw(include_bytes!("../c_test/fib.bin"))
-//         .expect("Failed to load program");
-//     println!("Program LOADED");
-
-//     while cpu.pc < (DRAM_BASE + DRAM_SIZE) as XRegisterSize {
-//         match cpu.execute() {
-//             Ok(_) => {
-//                 println!("{}", cpu.to_string());
-//             }
-//             Err(e) => {
-//                 eprintln!("Error: {e}");
-//             }
-//         }
-//         cpu.pc += 4;
-//     }
-
-//     println!("{}", cpu.to_string());
-// }
-
-/*#[test]
-pub fn program_test() {
-    // crate::logging::init_logging(); // enable for extra debug output
-    let mut cpu = Cpu::new();
-
-    debug!("Loading program...");
-    cpu.load_program_raw(include_bytes!("../c_test/test.bin"))
-        .expect("Failed to load program");
-    debug!("Program LOADED");
-
-    while !cpu.finished() {
-        match cpu.step() {
-            Ok(_) => (),
-            Err(e) => {
-                e.take_trap(&mut cpu);
-                if e.is_fatal() {
-                    error!("Fatal trap: {:#X}", e.exception_code());
-                    break;
-                }
-            }
-        }
-    }
-
-    debug!("{}", cpu.to_string());
-
-    debug!("Program executed");
-
-    assert_eq!(*cpu.get_register(10).unwrap(), 31);
-    assert_eq!(*cpu.get_register(15).unwrap(), 0x1F);
-}*/
+use log::{debug, info, trace};
+use riscv_decoder::{
+    decoded_inst::InstructionDecoded,
+    decoder::{try_decode, try_decode_compressed},
+    instructions::compressed::is_compressed,
+};
 
 // 32 bit RiscV CPU architecture
 pub struct Cpu {
     xregs: XRegisters,
     fregs: FRegisters,
 
-    // program counter
+    /// program counter
     pc: XRegisterSize,
 
     /// The current privilege mode.
     mode: Mode,
 
-    // little endian memory / stack array
+    /// little endian memory / stack array
     bus: Bus,
 
-    state: State,
+    /// Csr controller
+    state: Csr,
 }
 
 impl Cpu {
@@ -97,10 +47,29 @@ impl Cpu {
 
             bus: Bus::new(),
 
-            state: State::new(),
+            state: Csr::new(),
         };
         info!("CPU initialized");
         cpu
+    }
+
+    pub fn virtio(&self) -> &Virtio {
+        self.bus.get_virtio()
+    }
+    pub fn virtio_mut(&mut self) -> &mut Virtio {
+        self.bus.get_virtio_mut()
+    }
+
+    pub fn bus_read(&self, addr: u32, size: Sizes) -> Result<u32, Exception> {
+        self.bus.read(addr, size)
+    }
+
+    pub fn bus_write(&mut self, addr: u32, value: u32, size: Sizes) -> Result<(), Exception> {
+        self.bus.write(addr, value, size)
+    }
+
+    pub fn add_device(&mut self, device: Box<dyn Device>) {
+        self.bus.add_device(device);
     }
 
     pub fn get_mode(&self) -> Mode {
@@ -122,7 +91,9 @@ impl Cpu {
         self.state.read_csr(addr).expect("Failed to read CSR")
     }
     pub fn write_csr(&mut self, addr: usize, value: u32) {
-        self.state.write_csr(addr, value).expect("Failed to write CSR");
+        self.state
+            .write_csr(addr, value)
+            .expect("Failed to write CSR");
     }
 
     pub fn get_register(&self, register: XRegisterSize) -> Result<&XRegisterSize, String> {
@@ -150,23 +121,33 @@ impl Cpu {
 
     pub fn fetch(&mut self) -> Result<InstructionDecoded, Exception> {
         debug_assert!(self.pc % 4 == 0, "PC is not aligned to 4 bytes");
+
+        log::info!("PC: {:#X}", self.pc);
+
         let inst = self.bus.read(self.pc, Sizes::Word)?;
-        match try_decode_compressed(inst) {
-            Ok(inst) => {
-                self.pc += 2;
-                Ok(inst)
-            }
-            Err(_) => match try_decode(inst) {
-                Ok(inst) => {
-                    self.pc += 4;
-                    Ok(inst)
-                },
-                Err(_) => Err(Exception::IllegalInstruction),
-            },
+
+        if is_compressed(inst) {
+            self.pc += 2;
+            try_decode_compressed(inst).map_err(|e| {
+                log::error!(
+                    "Failed to decode compressed instruction: {:#X} => {e:?}",
+                    inst
+                );
+                Exception::IllegalInstruction
+            })
+        } else {
+            self.pc += 4;
+            try_decode(inst).map_err(|e| {
+                log::error!("Failed to decode instruction: {:#X} => {e:?}", inst);
+                Exception::IllegalInstruction
+            })
         }
     }
 
     pub fn execute(&mut self, inst: InstructionDecoded) -> Result<(), Exception> {
+        // x0 must always be zero (irl the circuit is literally hardwired to electriacal equivalent of 0)
+        self.xregs[0] = 0;
+
         match inst {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
                 debug!("ADD: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -259,32 +240,37 @@ impl Cpu {
             }
             InstructionDecoded::AuiPc { rd, imm } => {
                 debug!("AUIPC: rd: {rd}, imm: {imm}");
-                self.xregs[rd as usize] = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                self.xregs[rd as usize] =
+                    (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
             }
             InstructionDecoded::Jal { rd, imm } => {
                 debug!("JAL: rd: {rd}, imm: {}", imm as i32);
                 self.xregs[rd as usize] = self.pc; // save pc without + 4 because its already moved
-                let (pc, imm) = (
-                    self.pc as i32,
-                    imm as i32
-                );
-                self.pc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                let (pc, imm) = (self.pc as i32, imm as i32);
+                let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                debug!("Jumping to {:#X}", npc);
+                self.pc = npc;
             }
             InstructionDecoded::Jalr { rd, rs1, imm } => {
                 debug!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                let tmp = self.pc;
 
-                self.pc = (self.xregs[rs1 as usize].wrapping_add(imm)) & !1;
+                debug!("RA is currently: {:#X}", self.xregs[1]);
 
-                self.xregs[rd as usize] = tmp;
+                self.xregs[rd as usize] = self.pc;
+                let (reg, imm) = (self.xregs[rs1 as usize] as i32, imm as i32);
+                let npc = reg.wrapping_add(imm) as XRegisterSize;
+                debug!("Jumping to {:#X}", npc);
+                self.pc = npc;
             }
             InstructionDecoded::Beq { rs1, rs2, imm } => {
                 debug!("BEQ: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 == rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32);
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Bne { rs1, rs2, imm } => {
@@ -293,8 +279,10 @@ impl Cpu {
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 debug!("rs1 = {rs1}, rs2 = {rs2}");
                 if rs1 != rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4));
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Blt { rs1, rs2, imm } => {
@@ -302,8 +290,10 @@ impl Cpu {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 < rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32);
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Bge { rs1, rs2, imm } => {
@@ -311,8 +301,10 @@ impl Cpu {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 >= rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32);
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Bltu { rs1, rs2, imm } => {
@@ -320,8 +312,10 @@ impl Cpu {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 < rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32);
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Bgeu { rs1, rs2, imm } => {
@@ -329,8 +323,10 @@ impl Cpu {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 >= rs2 {
-                    debug!("Branching to {:#X}", (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32);
-                    self.pc = (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
+                    let (pc, imm) = (self.pc as i32, imm as i32);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    debug!("Branching to {:#X}", npc);
+                    self.pc = npc;
                 }
             }
             InstructionDecoded::Lb { rd, rs1, imm } => {
@@ -489,19 +485,20 @@ impl Cpu {
             InstructionDecoded::CsrRw { rd, rs1, imm } => {
                 debug!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, self.xregs.get(rs1 as usize));
+                self.write_csr(imm as usize, self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRs { rd, rs1, imm } => {
                 debug!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, t | self.xregs.get(rs1 as usize));
+                info!("OLD CSR: {:#X}", t);
+                self.write_csr(imm as usize, t | self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRc { rd, rs1, imm } => {
                 debug!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, t & (!self.xregs.get(rs1 as usize)));
+                self.write_csr(imm as usize, t & (!self.xregs[rs1 as usize]));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRwi { rd, rs1, imm } => {
@@ -600,7 +597,11 @@ impl Cpu {
             InstructionDecoded::FClassS { .. } => todo!(),
 
             // RV32M
-            InstructionDecoded::Mul { .. } => todo!(),
+            InstructionDecoded::Mul { rd, rs1, rs2 } => {
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = (rs1 * rs2) as XRegisterSize;
+            }
             InstructionDecoded::Mulh { .. } => todo!(),
             InstructionDecoded::Mulsu { .. } => todo!(),
             InstructionDecoded::Mulu { .. } => todo!(),
@@ -657,10 +658,9 @@ impl Cpu {
 
     pub fn dump_registers(&mut self) {
         const RVABI: [&str; 32] = [
-            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
-            "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
-            "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
-            "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
+            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3",
+            "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+            "t3", "t4", "t5", "t6",
         ];
         info!("{:-^80}", "registers");
         info!("{:3}({:^4}) = {:<#18x}", "pc", "pc", self.pc);
@@ -670,7 +670,7 @@ impl Cpu {
                 format!("x{}", i + 0),
                 format!("x{}", i + 1),
                 format!("x{}", i + 2),
-                format!("x{}", i + 3)
+                format!("x{}", i + 3),
             );
             let line = format!(
                 "{:3}({:^4}) = {:<#18x} {:3}({:^4}) = {:<#18x} {:3}({:^4}) = {:<#18x} {:3}({:^4}) = {:<#18x}",
@@ -704,42 +704,12 @@ impl Cpu {
     }
 
     pub fn load_program_raw(&mut self, program: &[u8]) -> Result<(), Exception> {
+        let program = convert_memory(program);
         let mut addr = DRAM_BASE as MemorySize;
-        for bytes in program.chunks_exact(4) {
-            let word = {
-                let word = u32::from_ne_bytes(bytes.try_into().unwrap());
-                word.to_le()
-            };
+        for word in program {
             self.bus.write(addr, word, Sizes::Word)?;
             addr += 4;
         }
         Ok(())
-    }
-
-    pub fn disassemble(&self, file: &str, from: MemorySize, to: MemorySize) {
-        use std::{fs::File, io::Write};
-        let mut file = File::create(file).expect("Failed to create file");
-        let mut pc = from;
-        while pc < to {
-            let inst = self.bus.read(pc, Sizes::Word).map_err(|e| {
-                format!("Error {e:#?} => Failed to read instruction from address: {:#X}", pc)
-            });
-            match inst {
-                Ok(inst) => {
-                    if is_compressed(inst) { pc += 2; } else { pc += 4; }
-                    let inst = decode(inst).map_err(|e| {
-                        format!("Failed to decode instruction: {e:?}")
-                    });
-                    writeln!(file, "{pc:#X}: {}", match inst {
-                        Ok(inst) => format!("{inst}"),
-                        Err(e) => format!("Error => {e}"),
-                    }).expect("Failed to write to file");
-                }
-                Err(e) => {
-                    writeln!(file, "{pc:#010x}: {e:?}").expect("Failed to write to file");
-                    break;
-                }
-            }
-        }
     }
 }

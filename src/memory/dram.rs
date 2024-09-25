@@ -5,6 +5,7 @@ use super::virtual_memory::{HeapMemory, MemorySize};
 pub const DRAM_SIZE: MemorySize = 1024 * 1024 * 128; // 1GB
 pub const DRAM_BASE: MemorySize = 0x8000_0000;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Sizes {
     Byte,
     HalfWord,
@@ -18,7 +19,9 @@ pub struct Dram {
 
 impl Dram {
     pub fn new() -> Self {
-        Self {memory: HeapMemory::new() }
+        Self {
+            memory: HeapMemory::new(),
+        }
     }
 
     pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
@@ -29,7 +32,12 @@ impl Dram {
         }
     }
 
-    pub fn write(&mut self, address: MemorySize, value: MemorySize, size: Sizes) -> Result<(), Exception> {
+    pub fn write(
+        &mut self,
+        address: MemorySize,
+        value: MemorySize,
+        size: Sizes,
+    ) -> Result<(), Exception> {
         match size {
             Sizes::Byte => self.memory.set8(address, value),
             Sizes::HalfWord => self.memory.set16(address, value),

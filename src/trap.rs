@@ -1,5 +1,10 @@
-use crate::{cpu::Cpu, csr::{Mode, MCAUSE, MEDELEG, MEPC, MSTATUS, MTVAL, MTVEC, SCAUSE, SEPC, SSTATUS, STVAL, STVEC}, memory::virtual_memory::MemorySize};
-
+use crate::{
+    cpu::Cpu,
+    csr::{
+        Mode, MCAUSE, MEDELEG, MEPC, MSTATUS, MTVAL, MTVEC, SCAUSE, SEPC, SSTATUS, STVAL, STVEC,
+    },
+    memory::virtual_memory::MemorySize,
+};
 
 /// All kinds of exceptions, an unusual condition occurring at run
 /// time associated with an instruction in the current hardware thread.
@@ -32,7 +37,9 @@ pub trait Trap {
         let previous_mode = cpu.get_mode();
 
         let cause = self.exception_code();
-        if (previous_mode <= Mode::Supervisor) && ((cpu.read_csr(MEDELEG).wrapping_shr(cause)) & 1 != 0) {
+        if (previous_mode <= Mode::Supervisor)
+            && ((cpu.read_csr(MEDELEG).wrapping_shr(cause)) & 1 != 0)
+        {
             // Handle the trap in S-mode.
             cpu.set_mode(Mode::Supervisor);
 
