@@ -1,7 +1,6 @@
 pub mod bus;
 pub mod cpu;
 pub mod csr;
-pub mod devices;
 pub mod logging;
 pub mod memory;
 pub mod registers;

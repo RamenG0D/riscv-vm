@@ -1,10 +1,11 @@
 use log::error;
 
 use crate::{
-    devices::virtio::Virtio, memory::{
+    memory::{
         dram::{Dram, Sizes, DRAM_BASE},
         virtual_memory::MemorySize,
-    }, trap::Exception
+    },
+    trap::Exception,
 };
 
 pub trait Device {
@@ -17,25 +18,15 @@ pub trait Device {
 
 pub struct Bus {
     devices: Vec<Box<dyn Device>>,
-    virtio: Virtio,
     dram: Dram,
 }
 
 impl Bus {
     pub fn new() -> Self {
         Self {
-            virtio: Virtio::new(),
             devices: Vec::new(),
             dram: Dram::new(),
         }
-    }
-
-    pub fn get_virtio(&self) -> &Virtio {
-        &self.virtio
-    }
-
-    pub fn get_virtio_mut(&mut self) -> &mut Virtio {
-        &mut self.virtio
     }
 
     pub fn add_device(&mut self, device: Box<dyn Device>) {
