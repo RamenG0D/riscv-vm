@@ -1,10 +1,114 @@
 pub mod bus;
 pub mod cpu;
 pub mod csr;
-pub mod logging;
 pub mod memory;
 pub mod registers;
 pub mod trap;
+
+#[cfg(feature = "logging")]
+#[cfg(debug_assertions)]
+pub mod logging {
+    pub use colored;
+    pub use fern;
+    pub use log;
+
+    #[macro_export]
+    macro_rules! log_trace {
+        ($($arg:tt)*) => {
+            log::trace!($($arg)*)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! log_debug {
+        ($($arg:tt)*) => {
+            log::debug!($($arg)*)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! log_info {
+        ($($arg:tt)*) => {
+            log::info!($($arg)*)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! log_warn {
+        ($($arg:tt)*) => {
+            log::warn!($($arg)*)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! log_error {
+        ($($arg:tt)*) => {
+            log::error!($($arg)*)
+        };
+    }
+
+    pub fn init_logging<T: Into<crate::logging::fern::Output>>(output: T) {
+        use crate::logging::fern::{colors::ColoredLevelConfig, Dispatch};
+        use crate::logging::colored::{Colorize, Color};
+
+        let colors = ColoredLevelConfig::new()
+            .info(fern::colors::Color::Green)
+            .debug(fern::colors::Color::Cyan)
+            .error(fern::colors::Color::Red);
+        Dispatch::new()
+            .format(move |out, message, record| {
+                out.finish(format_args!(
+                    "[{level}][{target}][{date}][{time}] {message}",
+                    date = chrono::Local::now()
+                        .format("%d-%m-%Y")
+                        .to_string()
+                        .color(Color::Green),
+                    time = chrono::Local::now()
+                        .format("%H:%M:%S")
+                        .to_string()
+                        .color(Color::BrightBlue),
+                    target = record.target().color(Color::Magenta),
+                    level = colors.color(record.level()),
+                    message = message,
+                ))
+            })
+            .level(log::LevelFilter::Debug)
+            .chain(output)
+            .apply()
+            .unwrap();
+    }
+}
+#[cfg(not(feature = "logging"))]
+#[cfg(not(debug_assertions))]
+pub mod logging {
+    #[inline(always)]
+    pub fn init_logging<T>(_: T) {}
+
+    #[macro_export]
+    macro_rules! log_trace {
+        ($($arg:tt)*) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_debug {
+        ($($arg:tt)*) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_info {
+        ($($arg:tt)*) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_warn {
+        ($($arg:tt)*) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_error {
+        ($($arg:tt)*) => {};
+    }
+}
 
 #[inline]
 pub fn convert_memory(mem: &[u8]) -> Vec<u32> {

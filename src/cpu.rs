@@ -1,16 +1,9 @@
 use crate::{
-    bit_ops::zero_extend,
-    bus::{Bus, Device},
-    convert_memory,
-    csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS},
-    memory::{
+    bit_ops::zero_extend, bus::{Bus, Device, VirtualDevice}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, log_error, log_trace, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    },
-    registers::{FRegisters, XRegisterSize, XRegisters},
-    trap::Exception,
+    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::Exception
 };
-use log::{error, trace};
 use riscv_decoder::{
     decoded_inst::InstructionDecoded,
     decoder::{try_decode, try_decode_compressed},
@@ -37,9 +30,8 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn new() -> Self {
-        trace!("Initializing CPU...");
+        log_trace!("Initializing CPU...");
         let mut registers = XRegisters::new();
-        // registers[1] = DRAM_BASE; // return address
 
         registers[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
 
@@ -55,7 +47,7 @@ impl Cpu {
 
             state: Csr::new(),
         };
-        trace!("CPU initialized");
+        log_trace!("CPU initialized");
         cpu
     }
 
@@ -67,7 +59,7 @@ impl Cpu {
         self.bus.write(addr, value, size)
     }
 
-    pub fn add_device(&mut self, device: Box<dyn Device>) {
+    pub fn add_device(&mut self, device: VirtualDevice) {
         self.bus.add_device(device);
     }
 
@@ -121,20 +113,20 @@ impl Cpu {
     pub fn fetch(&mut self) -> Result<InstructionDecoded, Exception> {
         debug_assert!(self.pc % 4 == 0, "PC is not aligned to 4 bytes");
 
-        trace!("PC: {:#X}", self.pc);
+        log_trace!("PC: {:#X}", self.pc);
 
         let inst = self.bus.read(self.pc, Sizes::Word)?;
 
         if is_compressed(inst) {
             self.pc += 2;
             try_decode_compressed(inst).map_err(|e| {
-                error!("Failed to decode compressed instruction: {:#X} => {e:?}", inst);
+                log_error!("Failed to decode compressed instruction: {:#X} => {e:?}", inst);
                 Exception::IllegalInstruction
             })
         } else {
             self.pc += 4;
             try_decode(inst).map_err(|e| {
-                error!("Failed to decode instruction: {:#X} => {e:?}", inst);
+                log_error!("Failed to decode instruction: {:#X} => {e:?}", inst);
                 Exception::IllegalInstruction
             })
         }
@@ -146,276 +138,276 @@ impl Cpu {
 
         match inst {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
-                trace!("ADD: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("ADD: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                trace!("rs1 = {rs1}, rs2 = {rs2}");
+                log_trace!("rs1 = {rs1}, rs2 = {rs2}");
                 self.xregs[rd as usize] = rs1.wrapping_add(rs2) as XRegisterSize;
             }
             InstructionDecoded::Addi { rd, rs1, imm } => {
-                trace!("ADDI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("ADDI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 self.xregs[rd as usize] = rs1.wrapping_add(imm as i32) as XRegisterSize;
             }
             InstructionDecoded::Sub { rd, rs1, rs2 } => {
-                trace!("SUB: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SUB: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 self.xregs[rd as usize] = rs1.wrapping_sub(rs2) as XRegisterSize;
             }
             InstructionDecoded::And { rd, rs1, rs2 } => {
-                trace!("AND: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("AND: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1 & rs2;
             }
             InstructionDecoded::Andi { rd, rs1, imm } => {
-                trace!("ANDI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("ANDI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1 & imm;
             }
             InstructionDecoded::Or { rd, rs1, rs2 } => {
-                trace!("OR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("OR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1 | rs2;
             }
             InstructionDecoded::Ori { rd, rs1, imm } => {
-                trace!("ORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("ORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1 | imm;
             }
             InstructionDecoded::Xor { rd, rs1, rs2 } => {
-                trace!("XOR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("XOR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1 ^ rs2;
             }
             InstructionDecoded::Xori { rd, rs1, imm } => {
-                trace!("XORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("XORI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1 ^ imm;
             }
             InstructionDecoded::Sll { rd, rs1, rs2 } => {
-                trace!("SLL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SLL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shl(rs2);
             }
             InstructionDecoded::Slli { rd, rs1, imm } => {
-                trace!("SLLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("SLLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shr(imm);
             }
             InstructionDecoded::Srl { rd, rs1, rs2 } => {
-                trace!("SRL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SRL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shr(rs2);
             }
             InstructionDecoded::Srli { rd, rs1, imm } => {
-                trace!("SRLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("SRLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shr(imm);
             }
             InstructionDecoded::Sra { rd, rs1, rs2 } => {
-                trace!("SRA: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SRA: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shr(rs2);
             }
             InstructionDecoded::Srai { rd, rs1, imm } => {
-                trace!("SRAI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("SRAI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_shr(imm);
             }
             InstructionDecoded::Lui { rd, imm } => {
-                trace!("LUI: rd: {rd}, imm: {imm}");
-                trace!("imm = {}", imm << 12);
+                log_trace!("LUI: rd: {rd}, imm: {imm}");
+                log_trace!("imm = {}", imm << 12);
                 self.xregs[rd as usize] = imm << 12;
             }
             InstructionDecoded::AuiPc { rd, imm } => {
-                trace!("AUIPC: rd: {rd}, imm: {imm}");
+                log_trace!("AUIPC: rd: {rd}, imm: {imm}");
                 self.xregs[rd as usize] =
                     (self.pc as i32).wrapping_add(imm as i32).wrapping_sub(4) as u32;
             }
             InstructionDecoded::Jal { rd, imm } => {
-                trace!("JAL: rd: {rd}, imm: {}", imm as i32);
+                log_trace!("JAL: rd: {rd}, imm: {}", imm as i32);
                 self.xregs[rd as usize] = self.pc; // save pc without + 4 because its already moved
                 let (pc, imm) = (self.pc as i32, imm as i32);
                 let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                trace!("Jumping to {:#X}", npc);
+                log_trace!("Jumping to {:#X}", npc);
                 self.pc = npc;
             }
             InstructionDecoded::Jalr { rd, rs1, imm } => {
-                trace!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                trace!("RA is currently: {:#X}", self.xregs[1]);
+                log_trace!("RA is currently: {:#X}", self.xregs[1]);
 
                 self.xregs[rd as usize] = self.pc;
                 let (reg, imm) = (self.xregs[rs1 as usize] as i32, imm as i32);
                 let npc = reg.wrapping_add(imm) as XRegisterSize;
-                trace!("Jumping to {:#X}", npc);
+                log_trace!("Jumping to {:#X}", npc);
                 self.pc = npc;
             }
             InstructionDecoded::Beq { rs1, rs2, imm } => {
-                trace!("BEQ: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BEQ: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 == rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Bne { rs1, rs2, imm } => {
-                trace!("BNE: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BNE: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                trace!("rs1 = {rs1}, rs2 = {rs2}");
+                log_trace!("rs1 = {rs1}, rs2 = {rs2}");
                 if rs1 != rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Blt { rs1, rs2, imm } => {
-                trace!("BLT: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BLT: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 < rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Bge { rs1, rs2, imm } => {
-                trace!("BGE: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BGE: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 >= rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Bltu { rs1, rs2, imm } => {
-                trace!("BLTU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BLTU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 < rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Bgeu { rs1, rs2, imm } => {
-                trace!("BGEU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("BGEU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 if rs1 >= rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
                     let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
-                    trace!("Branching to {:#X}", npc);
+                    log_trace!("Branching to {:#X}", npc);
                     self.pc = npc;
                 }
             }
             InstructionDecoded::Lb { rd, rs1, imm } => {
-                trace!("LB: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("LB: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 let value = self.bus.read(addr, Sizes::Byte)?;
                 self.xregs[rd as usize] = zero_extend(value);
             }
             InstructionDecoded::Lh { rd, rs1, imm } => {
-                trace!("LH: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("LH: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 let value = self.bus.read(addr, Sizes::HalfWord)?;
                 self.xregs[rd as usize] = zero_extend(value);
             }
             InstructionDecoded::Lw { rd, rs1, imm } => {
-                trace!("LW: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("LW: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 let value = self.bus.read(addr, Sizes::Word)?;
                 self.xregs[rd as usize] = value;
             }
             InstructionDecoded::Lbu { rd, rs1, imm } => {
-                trace!("LBU: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("LBU: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 // the read value must be zero-extended to 32 bits
                 let value = self.bus.read(addr, Sizes::Byte)?;
                 self.xregs[rd as usize] = zero_extend(value);
             }
             InstructionDecoded::Lhu { rd, rs1, imm } => {
-                trace!("LHU: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
+                log_trace!("LHU: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 // the read value must be zero-extended to 32 bits
                 let value = self.bus.read(addr, Sizes::HalfWord)?;
                 self.xregs[rd as usize] = zero_extend(value);
             }
             InstructionDecoded::Lwu { rd, rs1, imm } => {
-                trace!("LWU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("LWU: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                log_trace!("Reading from address: {:#X}", addr);
                 let value = self.bus.read(addr, Sizes::Word)?;
                 self.xregs[rd as usize] = zero_extend(value);
             }
             InstructionDecoded::Sb { rs1, rs2, imm } => {
-                trace!("SB: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("SB: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Writing to address: {:#X}", addr);
+                log_trace!("Writing to address: {:#X}", addr);
                 let value = self.xregs[rs2 as usize] as u8 as u32;
                 self.bus.write(addr, value, Sizes::Byte)?;
             }
             InstructionDecoded::Sh { rs1, rs2, imm } => {
-                trace!("SH: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("SH: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Writing to address: {:#X}", addr);
+                log_trace!("Writing to address: {:#X}", addr);
                 let value = self.xregs[rs2 as usize] as u16 as u32;
                 self.bus.write(addr, value, Sizes::HalfWord)?;
             }
             InstructionDecoded::Sw { rs1, rs2, imm } => {
-                trace!("SW: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
+                log_trace!("SW: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Writing to address: {:#X}", addr);
+                log_trace!("Writing to address: {:#X}", addr);
                 let value = self.xregs[rs2 as usize];
                 self.bus.write(addr, value, Sizes::Word)?;
             }
             InstructionDecoded::ECall => {
-                trace!("ECALL");
+                log_trace!("ECALL");
                 match self.mode {
                     Mode::User => {
-                        trace!("ECall => User mode");
+                        log_trace!("ECall => User mode");
                         return Err(Exception::EnvironmentCallFromUMode);
                     }
                     Mode::Supervisor => {
-                        trace!("ECall => Supervisor mode");
+                        log_trace!("ECall => Supervisor mode");
                         return Err(Exception::EnvironmentCallFromSMode);
                     }
                     Mode::Machine => {
-                        trace!("ECall => Machine mode");
+                        log_trace!("ECall => Machine mode");
                         return Err(Exception::EnvironmentCallFromMMode);
                     }
                 }
             }
             InstructionDecoded::EBreak => {
-                trace!("EBREAK");
+                log_trace!("EBREAK");
                 // ebreak
                 // Makes a request of the debugger bu raising a Breakpoint
                 // exception.
                 return Err(Exception::Breakpoint);
             }
             InstructionDecoded::SRet => {
-                trace!("SRET");
+                log_trace!("SRET");
                 // The SRET instruction returns from a supervisor-mode exception
                 // handler. It does the following operations:
                 // - Sets the pc to CSRs[sepc].
@@ -446,7 +438,7 @@ impl Cpu {
                 self.write_csr(SSTATUS, self.read_csr(SSTATUS) & !(1 << 8));
             }
             InstructionDecoded::MRet => {
-                trace!("MRET");
+                log_trace!("MRET");
                 // The MRET instruction returns from a machine-mode exception
                 // handler. It does the following operations:
                 // - Sets the pc to CSRs[mepc].
@@ -475,35 +467,35 @@ impl Cpu {
                 self.write_csr(MSTATUS, self.read_csr(MSTATUS) & !(0b11 << 11));
             }
             InstructionDecoded::SFenceVma => {
-                trace!("SFENCE.VMA");
+                log_trace!("SFENCE.VMA");
                 // do nothing
             }
             InstructionDecoded::CsrRw { rd, rs1, imm } => {
-                trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
                 self.write_csr(imm as usize, self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRs { rd, rs1, imm } => {
-                trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
-                trace!("OLD CSR: {:#X}", t);
+                log_trace!("OLD CSR: {:#X}", t);
                 self.write_csr(imm as usize, t | self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRc { rd, rs1, imm } => {
-                trace!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
                 self.write_csr(imm as usize, t & (!self.xregs[rs1 as usize]));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRwi { rd, rs1, imm } => {
-                trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 self.xregs[rd as usize] = self.read_csr(imm as usize);
                 self.write_csr(imm as usize, rs1);
             }
             InstructionDecoded::CsrRsi { rd, rs1, imm } => {
-                trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let t = self.read_csr(imm as usize);
                 self.write_csr(imm as usize, t | rs1);
                 self.xregs[rd as usize] = t;
@@ -514,23 +506,23 @@ impl Cpu {
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::Slti { rd, rs1, imm } => {
-                trace!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = if rs1 < imm { 1 } else { 0 };
             }
             InstructionDecoded::Sltiu { rd, rs1, imm } => {
-                trace!("SLTIU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!("SLTIU: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = if rs1 < imm { 1 } else { 0 };
             }
             InstructionDecoded::Slt { rd, rs1, rs2 } => {
-                trace!("SLT: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SLT: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
             }
             InstructionDecoded::Sltu { rd, rs1, rs2 } => {
-                trace!("SLTU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!("SLTU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
@@ -543,8 +535,8 @@ impl Cpu {
                 pred,
                 succ,
             } => {
-                trace!("FENCE: rd: {rd}, rs1: {rs1}, fm: {fm}, pred: {pred}, succ: {succ}");
-                trace!("Not Currently Implemented");
+                log_trace!("FENCE: rd: {rd}, rs1: {rs1}, fm: {fm}, pred: {pred}, succ: {succ}");
+                log_trace!("Not Currently Implemented");
             }
             InstructionDecoded::FenceI {
                 rd,
@@ -553,8 +545,8 @@ impl Cpu {
                 pred,
                 succ,
             } => {
-                trace!("FENCE.I: rd: {rd}, rs1: {rs1}, fm: {fm}, pred: {pred}, succ: {succ}");
-                trace!("Not Currently Implemented");
+                log_trace!("FENCE.I: rd: {rd}, rs1: {rs1}, fm: {fm}, pred: {pred}, succ: {succ}");
+                log_trace!("Not Currently Implemented");
             }
 
             // RV32D
@@ -614,7 +606,7 @@ impl Cpu {
                 rl,
                 aq,
             } => {
-                trace!("LR.W: rd: {rd}, rs1: {rs1}, rs2: {rs2}, rl: {rl}, aq: {aq}");
+                log_trace!("LR.W: rd: {rd}, rs1: {rs1}, rs2: {rs2}, rl: {rl}, aq: {aq}");
                 let addr = self.xregs[rs1 as usize];
                 let value = self.bus.read(addr, Sizes::Word)?;
                 self.xregs[rd as usize] = value;
@@ -626,7 +618,7 @@ impl Cpu {
                 rl,
                 aq,
             } => {
-                trace!("SC.W: rd: {rd}, rs1: {rs1}, rs2: {rs2}, rl: {rl}, aq: {aq}");
+                log_trace!("SC.W: rd: {rd}, rs1: {rs1}, rs2: {rs2}, rl: {rl}, aq: {aq}");
                 let addr = self.xregs[rs1 as usize];
                 let value = self.xregs[rs2 as usize];
                 let reserved = self.bus.read(addr, Sizes::Word)?;
@@ -639,12 +631,12 @@ impl Cpu {
             }
             InstructionDecoded::CNop => (),
             InstructionDecoded::CAddi4Spn { rd, nzuimm } => {
-                trace!("C.ADDI4SPN: rd: {rd}, nzuimm: {nzuimm}");
+                log_trace!("C.ADDI4SPN: rd: {rd}, nzuimm: {nzuimm}");
                 // imm * 4 + SP
                 self.xregs[rd as usize] = self.xregs[2] + (nzuimm as u32) * 4;
             }
             InstructionDecoded::CSlli { rd, rs1, shamt } => {
-                trace!("C.SLLI: rd: {rd}, rs1: {rs1}, shamt: {shamt}");
+                log_trace!("C.SLLI: rd: {rd}, rs1: {rs1}, shamt: {shamt}");
                 self.xregs[rd as usize] = self.xregs[rs1 as usize] << shamt;
             }
         }
@@ -658,8 +650,8 @@ impl Cpu {
             "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
             "t3", "t4", "t5", "t6",
         ];
-        trace!("{:-^80}", "registers");
-        trace!("{:3}({:^4}) = {:<#18x}", "pc", "pc", self.pc);
+        log_trace!("{:-^80}", "registers");
+        log_trace!("{:3}({:^4}) = {:<#18x}", "pc", "pc", self.pc);
         self.xregs[0] = 0;
         for i in (0..32).step_by(4) {
             let (i0, i1, i2, i3) = (
@@ -675,7 +667,7 @@ impl Cpu {
                 i2, RVABI[i + 2], self.xregs[i + 2],
                 i3, RVABI[i + 3], self.xregs[i + 3],
             );
-            trace!("{line}");
+            log_trace!("{line}");
         }
     }
 

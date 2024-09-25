@@ -1,23 +1,49 @@
-use log::error;
-
 use crate::{
-    memory::{
+    log_error, memory::{
         dram::{Dram, Sizes, DRAM_BASE},
         virtual_memory::MemorySize,
-    },
-    trap::Exception,
+    }, trap::Exception
 };
 
 pub trait Device {
-    fn base(&self) -> MemorySize;
-    fn size(&self) -> MemorySize;
-
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception>;
     fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception>;
 }
 
+pub struct VirtualDevice {
+    inner_device: Box<dyn Device>,
+    base: MemorySize,
+    size: MemorySize,
+}
+
+impl VirtualDevice {
+    pub fn new(inner_device: Box<dyn Device>, base: MemorySize, size: MemorySize) -> Self {
+        Self {
+            inner_device,
+            base,
+            size,
+        }
+    }
+
+    pub fn base(&self) -> MemorySize {
+        self.base
+    }
+
+    pub fn size(&self) -> MemorySize {
+        self.size
+    }
+
+    pub fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+        self.inner_device.load(addr, size)
+    }
+
+    pub fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
+        self.inner_device.store(addr, size, value)
+    }
+}
+
 pub struct Bus {
-    devices: Vec<Box<dyn Device>>,
+    devices: Vec<VirtualDevice>,
     dram: Dram,
 }
 
@@ -29,7 +55,7 @@ impl Bus {
         }
     }
 
-    pub fn add_device(&mut self, device: Box<dyn Device>) {
+    pub fn add_device(&mut self, device: VirtualDevice) {
         self.devices.push(device);
     }
 
@@ -44,7 +70,7 @@ impl Bus {
             let address = address - DRAM_BASE;
             return self.dram.read(address, size);
         }
-        error!("Bus Read LoadAccessFault: {:#X}", address);
+        log_error!("Bus Read LoadAccessFault: {:#X}", address);
         Err(Exception::LoadAccessFault)
     }
 
@@ -64,7 +90,7 @@ impl Bus {
             let address = address - DRAM_BASE;
             return self.dram.write(address, value, size);
         }
-        error!("Bus Write StoreAMOAccessFault: {:#X}", address);
+        log_error!("Bus Write StoreAMOAccessFault: {:#X}", address);
         Err(Exception::StoreAMOAccessFault)
     }
 }
