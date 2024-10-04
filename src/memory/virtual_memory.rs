@@ -115,7 +115,7 @@ impl<const L: usize> HeapMemory<L> {
 
     pub fn set32(&mut self, index: MemorySize, value: MemorySize) -> Result<(), Exception> {
         if index + 3 > L as MemorySize {
-            return Err(Exception::StoreAMOAccessFault);
+            return Err(Exception::StoreAccessFault);
         }
         self.memory[index as usize] = (value & 0xFF) as u8;
         self.memory[(index as usize) + 1] = ((value >> 8) & 0xFF) as u8;
@@ -126,7 +126,7 @@ impl<const L: usize> HeapMemory<L> {
 
     pub fn set16(&mut self, index: MemorySize, value: MemorySize) -> Result<(), Exception> {
         if index + 1 > L as MemorySize {
-            return Err(Exception::StoreAMOAccessFault);
+            return Err(Exception::StoreAccessFault);
         }
         self.memory[index as usize] = (value & 0xFF) as u8;
         self.memory[(index as usize) + 1] = ((value >> 8) & 0xFF) as u8;
@@ -135,7 +135,7 @@ impl<const L: usize> HeapMemory<L> {
 
     pub fn set8(&mut self, index: MemorySize, value: MemorySize) -> Result<(), Exception> {
         if index > L as MemorySize {
-            return Err(Exception::StoreAMOAccessFault);
+            return Err(Exception::StoreAccessFault);
         }
         self.memory[index as usize] = (value & 0xFF) as u8;
         Ok(())

@@ -1,4 +1,4 @@
-use crate::trap::Exception;
+use crate::{bus::Device, trap::Exception};
 
 use super::virtual_memory::{HeapMemory, MemorySize};
 
@@ -43,5 +43,15 @@ impl Dram {
             Sizes::HalfWord => self.memory.set16(address, value),
             Sizes::Word => self.memory.set32(address, value),
         }
+    }
+}
+
+impl Device for Dram {
+    fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+        self.read(addr, size)
+    }
+
+    fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
+        self.write(addr, value, size)
     }
 }

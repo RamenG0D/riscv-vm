@@ -1,51 +1,51 @@
 // Machine-level CSRs.
 /// Hardware thread ID.
-pub const MHARTID: usize = 0xf14;
+pub const MHARTID: u32 = 0xf14;
 /// Machine status register.
-pub const MSTATUS: usize = 0x300;
+pub const MSTATUS: u32 = 0x300;
 /// Machine exception delefation register.
-pub const MEDELEG: usize = 0x302;
+pub const MEDELEG: u32 = 0x302;
 /// Machine interrupt delefation register.
-pub const MIDELEG: usize = 0x303;
+pub const MIDELEG: u32 = 0x303;
 /// Machine interrupt-enable register.
-pub const MIE: usize = 0x304;
+pub const MIE: u32 = 0x304;
 /// Machine trap-handler base address.
-pub const MTVEC: usize = 0x305;
+pub const MTVEC: u32 = 0x305;
 /// Machine counter enable.
-pub const MCOUNTEREN: usize = 0x306;
+pub const MCOUNTEREN: u32 = 0x306;
 /// Scratch register for machine trap handlers.
-pub const MSCRATCH: usize = 0x340;
+pub const MSCRATCH: u32 = 0x340;
 /// Machine exception program counter.
-pub const MEPC: usize = 0x341;
+pub const MEPC: u32 = 0x341;
 /// Machine trap cause.
-pub const MCAUSE: usize = 0x342;
+pub const MCAUSE: u32 = 0x342;
 /// Machine bad address or instruction.
-pub const MTVAL: usize = 0x343;
+pub const MTVAL: u32 = 0x343;
 /// Machine interrupt pending.
-pub const MIP: usize = 0x344;
+pub const MIP: u32 = 0x344;
 // Machine trap setup.
 /// ISA and extensions.
-const MISA: usize = 0x301;
+pub const MISA: u32 = 0x301;
 
 // Supervisor-level CSRs.
 /// Supervisor status register.
-pub const SSTATUS: usize = 0x100;
+pub const SSTATUS: u32 = 0x100;
 /// Supervisor interrupt-enable register.
-pub const SIE: usize = 0x104;
+pub const SIE: u32 = 0x104;
 /// Supervisor trap handler base address.
-pub const STVEC: usize = 0x105;
+pub const STVEC: u32 = 0x105;
 /// Scratch register for supervisor trap handlers.
-pub const SSCRATCH: usize = 0x140;
+pub const SSCRATCH: u32 = 0x140;
 /// Supervisor exception program counter.
-pub const SEPC: usize = 0x141;
+pub const SEPC: u32 = 0x141;
 /// Supervisor trap cause.
-pub const SCAUSE: usize = 0x142;
+pub const SCAUSE: u32 = 0x142;
 /// Supervisor bad address or instruction.
-pub const STVAL: usize = 0x143;
+pub const STVAL: u32 = 0x143;
 /// Supervisor interrupt pending.
-pub const SIP: usize = 0x144;
+pub const SIP: u32 = 0x144;
 /// Supervisor address translation and protection.
-pub const SATP: usize = 0x180;
+pub const SATP: u32 = 0x180;
 
 /// The privileged mode.
 #[derive(Debug, PartialEq, PartialOrd, Eq, Copy, Clone)]
@@ -95,25 +95,25 @@ impl Csr {
 
         let misa = MisaFlags::new(1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
 
-        csr[MISA] = misa.inner();
+        csr[MISA as usize] = misa.inner();
 
         Self { csr }
     }
 
-    pub fn write_csr(&mut self, addr: usize, value: u32) -> Option<()> {
+    pub fn write_csr(&mut self, addr: u32, value: u32) -> Option<()> {
         match addr {
             SIE => {
-                self.csr[MIE] = (self.csr[MIE] & !self.csr[MIDELEG]) | (value & self.csr[MIDELEG])
+                self.csr[MIE as usize] = (self.csr[MIE as usize] & !self.csr[MIDELEG as usize]) | (value & self.csr[MIDELEG as usize])
             }
-            _ => *self.csr.get_mut(addr)? = value,
+            _ => *self.csr.get_mut(addr as usize)? = value,
         }
         Some(())
     }
 
-    pub fn read_csr(&self, addr: usize) -> Option<u32> {
+    pub fn read_csr(&self, addr: u32) -> Option<u32> {
         match addr {
-            SIE => Some(self.csr[MIE] & self.csr[MIDELEG]),
-            _ => self.csr.get(addr).map(|&v| v),
+            SIE => Some(self.csr[MIE as usize] & self.csr[MIDELEG as usize]),
+            _ => self.csr.get(addr as usize).map(|&v| v),
         }
     }
 }

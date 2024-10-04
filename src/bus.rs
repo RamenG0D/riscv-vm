@@ -1,7 +1,7 @@
 use crate::{
     log_error,
     memory::{
-        dram::{Dram, Sizes, DRAM_BASE},
+        dram::{Dram, Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
     },
     trap::Exception,
@@ -51,14 +51,13 @@ impl VirtualDevice {
 
 pub struct Bus {
     devices: Vec<VirtualDevice>,
-    dram: Dram,
 }
 
 impl Bus {
     pub fn new() -> Self {
+        let dram = VirtualDevice::new(Box::new(Dram::new()), DRAM_BASE, DRAM_SIZE);
         Self {
-            devices: Vec::new(),
-            dram: Dram::new(),
+            devices: vec![dram],
         }
     }
 
@@ -69,13 +68,9 @@ impl Bus {
     pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         for device in &self.devices {
             if device.base() <= address && address < device.base() + device.size() {
-                let address = address - device.base();
+                let address = address - device.base(); // local address
                 return device.load(address, size);
             }
-        }
-        if DRAM_BASE <= address {
-            let address = address - DRAM_BASE;
-            return self.dram.read(address, size);
         }
         log_error!("Bus Read LoadAccessFault: {:#X}", address);
         Err(Exception::LoadAccessFault)
@@ -93,11 +88,7 @@ impl Bus {
                 return device.store(address, size, value);
             }
         }
-        if DRAM_BASE <= address {
-            let address = address - DRAM_BASE;
-            return self.dram.write(address, value, size);
-        }
         log_error!("Bus Write StoreAMOAccessFault: {:#X}", address);
-        Err(Exception::StoreAMOAccessFault)
+        Err(Exception::StoreAccessFault)
     }
 }

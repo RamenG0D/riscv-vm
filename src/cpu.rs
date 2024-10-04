@@ -1,20 +1,13 @@
 use crate::{
-    bit_ops::zero_extend,
-    bus::{Bus, VirtualDevice},
-    convert_memory,
-    csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS},
-    log_error, log_trace,
-    memory::{
+    bit_ops::zero_extend, bus::{Bus, VirtualDevice}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, log_debug, log_error, log_trace, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    },
-    registers::{FRegisters, XRegisterSize, XRegisters},
-    trap::Exception,
+    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::Exception
 };
 use riscv_decoder::{
     decoded_inst::InstructionDecoded,
-    decoder::{try_decode, try_decode_compressed},
     instructions::compressed::is_compressed,
+    decoder::try_decode,
 };
 
 // 32 bit RiscV CPU architecture
@@ -45,7 +38,7 @@ impl Cpu {
         let cpu = Self {
             xregs: registers,
             _fregs: FRegisters::new(),
-            pc: DRAM_BASE as u32,
+            pc: DRAM_BASE,
             mode: Mode::Machine,
             bus: Bus::new(),
             state: Csr::new(),
@@ -81,10 +74,10 @@ impl Cpu {
         self.pc = pc;
     }
 
-    pub fn read_csr(&self, addr: usize) -> u32 {
+    pub fn read_csr(&self, addr: u32) -> u32 {
         self.state.read_csr(addr).expect("Failed to read CSR")
     }
-    pub fn write_csr(&mut self, addr: usize, value: u32) {
+    pub fn write_csr(&mut self, addr: u32, value: u32) {
         self.state
             .write_csr(addr, value)
             .expect("Failed to write CSR");
@@ -114,33 +107,29 @@ impl Cpu {
     }
 
     pub fn fetch(&mut self) -> Result<InstructionDecoded, Exception> {
-        debug_assert!(self.pc % 4 == 0, "PC is not aligned to 4 bytes");
-
         log_trace!("PC: {:#X}", self.pc);
 
         let inst = self.bus.read(self.pc, Sizes::Word)?;
+        // log_trace!("Instruction: {:#X}", inst);
 
         if is_compressed(inst) {
             self.pc += 2;
-            try_decode_compressed(inst).map_err(|e| {
-                log_error!(
-                    "Failed to decode compressed instruction: {:#X} => {e:?}",
-                    inst
-                );
-                Exception::IllegalInstruction
-            })
         } else {
             self.pc += 4;
-            try_decode(inst).map_err(|e| {
-                log_error!("Failed to decode instruction: {:#X} => {e:?}", inst);
-                Exception::IllegalInstruction
-            })
         }
+
+        // decode the instruction (automatically detects if compressed)
+        try_decode(inst).map_err(|e| {
+            log_error!("Failed to decode instruction: {:#X} => {e:?}", inst);
+            Exception::IllegalInstruction
+        })
     }
 
     pub fn execute(&mut self, inst: InstructionDecoded) -> Result<(), Exception> {
         // x0 must always be zero (irl the circuit is literally hardwired to electriacal equivalent of 0)
         self.xregs[0] = 0;
+
+        log_debug!("{inst}");
 
         match inst {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
@@ -478,37 +467,37 @@ impl Cpu {
             }
             InstructionDecoded::CsrRw { rd, rs1, imm } => {
                 log_trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, self.xregs[rs1 as usize]);
+                let t = self.read_csr(imm);
+                self.write_csr(imm, self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRs { rd, rs1, imm } => {
                 log_trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                let t = self.read_csr(imm as usize);
+                let t = self.read_csr(imm);
                 log_trace!("OLD CSR: {:#X}", t);
-                self.write_csr(imm as usize, t | self.xregs[rs1 as usize]);
+                self.write_csr(imm, t | self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRc { rd, rs1, imm } => {
                 log_trace!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, t & (!self.xregs[rs1 as usize]));
+                let t = self.read_csr(imm);
+                self.write_csr(imm, t & (!self.xregs[rs1 as usize]));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRwi { rd, rs1, imm } => {
                 log_trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                self.xregs[rd as usize] = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, rs1);
+                self.xregs[rd as usize] = self.read_csr(imm);
+                self.write_csr(imm, rs1);
             }
             InstructionDecoded::CsrRsi { rd, rs1, imm } => {
                 log_trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, t | rs1);
+                let t = self.read_csr(imm);
+                self.write_csr(imm, t | rs1);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRci { rd, rs1, imm } => {
-                let t = self.read_csr(imm as usize);
-                self.write_csr(imm as usize, t & (!rs1));
+                let t = self.read_csr(imm);
+                self.write_csr(imm, t & (!rs1));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::Slti { rd, rs1, imm } => {
@@ -635,16 +624,12 @@ impl Cpu {
                     self.xregs[rd as usize] = 1;
                 }
             }
-            InstructionDecoded::CNop => (),
-            InstructionDecoded::CAddi4Spn { rd, nzuimm } => {
-                log_trace!("C.ADDI4SPN: rd: {rd}, nzuimm: {nzuimm}");
-                // imm * 4 + SP
-                self.xregs[rd as usize] = self.xregs[2] + (nzuimm as u32) * 4;
-            }
-            InstructionDecoded::CSlli { rd, rs1, shamt } => {
-                log_trace!("C.SLLI: rd: {rd}, rs1: {rs1}, shamt: {shamt}");
-                self.xregs[rd as usize] = self.xregs[rs1 as usize] << shamt;
-            }
+
+            // RV32C
+
+            InstructionDecoded::CAddi4Spn { .. } => todo!(),
+            InstructionDecoded::CNop { .. } => todo!(),
+            InstructionDecoded::CSlli { .. } => todo!(),
         }
 
         Ok(())
@@ -691,7 +676,6 @@ impl Cpu {
     pub fn run(&mut self) -> Result<(), Exception> {
         while !self.finished() {
             let inst = self.fetch()?;
-            self.pc += 4;
             self.execute(inst)?;
         }
         Ok(())
@@ -700,10 +684,11 @@ impl Cpu {
     pub fn load_program_raw(&mut self, program: &[u8]) -> Result<(), Exception> {
         let program = convert_memory(program);
         let mut addr = DRAM_BASE as MemorySize;
-        for word in program {
-            self.bus.write(addr, word, Sizes::Word)?;
+        for word in program.iter() {
+            self.bus.write(addr, *word, Sizes::Word)?;
             addr += 4;
         }
+
         Ok(())
     }
 }

@@ -4,6 +4,7 @@ pub mod csr;
 pub mod memory;
 pub mod registers;
 pub mod trap;
+pub mod devices;
 
 #[cfg(feature = "logging")]
 #[cfg(debug_assertions)]
@@ -11,6 +12,7 @@ pub mod logging {
     pub use colored;
     pub use fern;
     pub use log;
+    use log::LevelFilter;
 
     #[macro_export]
     macro_rules! log_trace {
@@ -47,7 +49,7 @@ pub mod logging {
         };
     }
 
-    pub fn init_logging<T: Into<crate::logging::fern::Output>>(output: T) {
+    pub fn init_logging(level: LevelFilter) {
         use crate::logging::colored::{Color, Colorize};
         use crate::logging::fern::{colors::ColoredLevelConfig, Dispatch};
 
@@ -72,13 +74,13 @@ pub mod logging {
                     message = message,
                 ))
             })
-            .level(log::LevelFilter::Debug)
-            .chain(output)
+            .level(level)
+            .chain(std::io::stdout())
             .apply()
             .unwrap();
     }
 }
-#[cfg(not(feature = "logging"))]
+#[cfg(feature = "logging")]
 #[cfg(not(debug_assertions))]
 pub mod logging {
     #[inline(always)]
@@ -111,9 +113,10 @@ pub mod logging {
 }
 
 #[inline]
-pub fn convert_memory(mem: &[u8]) -> Vec<u32> {
+/// Used to convert a slice of bytes to a slice of u32 and ensure that the ouput slice is little endian
+pub fn convert_memory(data: &[u8]) -> Vec<u32> {
     let mut program = Vec::new();
-    for bytes in mem.chunks_exact(4) {
+    for bytes in data.chunks_exact(4) {
         let word = {
             let word = u32::from_ne_bytes(bytes.try_into().unwrap());
             word.to_le()

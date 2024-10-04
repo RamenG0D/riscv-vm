@@ -16,14 +16,14 @@ pub enum Exception {
     Breakpoint,
     LoadAddressMisaligned,
     LoadAccessFault,
-    StoreAMOAddressMisaligned,
-    StoreAMOAccessFault,
+    StoreAddressMisaligned,
+    StoreAccessFault,
     EnvironmentCallFromUMode,
     EnvironmentCallFromSMode,
     EnvironmentCallFromMMode,
     InstructionPageFault,
     LoadPageFault,
-    StoreAMOPageFault,
+    StorePageFault,
 }
 
 /// The transfer of control to a trap handler caused by either an
@@ -150,14 +150,14 @@ impl Trap for Exception {
             Exception::Breakpoint => 3,
             Exception::LoadAddressMisaligned => 4,
             Exception::LoadAccessFault => 5,
-            Exception::StoreAMOAddressMisaligned => 6,
-            Exception::StoreAMOAccessFault => 7,
+            Exception::StoreAddressMisaligned => 6,
+            Exception::StoreAccessFault => 7,
             Exception::EnvironmentCallFromUMode => 8,
             Exception::EnvironmentCallFromSMode => 9,
             Exception::EnvironmentCallFromMMode => 11,
             Exception::InstructionPageFault => 12,
             Exception::LoadPageFault => 13,
-            Exception::StoreAMOPageFault => 15,
+            Exception::StorePageFault => 15,
         }
     }
 }
@@ -168,8 +168,8 @@ impl Exception {
             Exception::InstructionAddressMisaligned
             | Exception::InstructionAccessFault
             | Exception::LoadAccessFault
-            | Exception::StoreAMOAddressMisaligned
-            | Exception::StoreAMOAccessFault => true,
+            | Exception::StoreAddressMisaligned
+            | Exception::StoreAccessFault => true,
             _ => false,
         }
     }
