@@ -6,4 +6,3 @@ main:
     sb t0, 0(t1)
     li t0, 10
     sb t0, 0(t1)
-    ret

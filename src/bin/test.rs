@@ -58,7 +58,7 @@ impl Virtio {
     }
 }
 
-use riscv_vm::{cpu::Cpu, devices::{clint::Clint, plic::Plic, uart::Uart}, log_info, trap::{Exception, Trap}};
+use riscv_vm::{cpu::Cpu, devices::{clint::Clint, plic::Plic, uart::Uart}, log_info, trap::Exception};
 use log::LevelFilter;
 
 // The main function
@@ -71,20 +71,13 @@ fn main() {
     cpu.add_device(Plic::new_device());
     cpu.add_device(Clint::new_device());
 
-    cpu.load_program_raw(&[]).unwrap();
+    cpu.load_program_raw(include_bytes!("../../c_test/fib.bin")).unwrap();
 
     match cpu.run() {
         Ok(_) => (),
-        Err(Exception::IllegalInstruction) => {
-            eprintln!("Illegal Instruction");
-        }
-        Err(Exception::LoadAccessFault) => {
-            eprintln!("Load Access Fault");
-        }
-        Err(e) => {
-            eprintln!("Trap / Err: {e:#?}");
-            e.take_trap(&mut cpu);
-        }
+        Err(Exception::IllegalInstruction) => eprintln!("Illegal Instruction"),
+        Err(Exception::LoadAccessFault) => eprintln!("Load Access Fault"),
+        Err(e) => eprintln!("Trap / Err: {e:#?}"),
     }
 
     log_info!("Finished running the program!");
