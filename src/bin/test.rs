@@ -1,12 +1,12 @@
 
 // The Virtio Constants (Magic!)
 // qemu puts UART registers here in physical memory.
-const UART0: u32 = 0x10000000;
-const UART0_IRQ: u32 = 10;
+const UART: u32 = 0x10000000;
+const UART_IRQ: u32 = 10;
 
 // virtio mmio interface
-const VIRTIO0: u32 = 0x10001000;
-const VIRTIO0_IRQ: u32 = 1;
+const VIRTIO: u32 = 0x10001000;
+const VIRTIO_IRQ: u32 = 1;
 
 // A Virtio (Virtual I/O) Driver implementation
 pub struct Virtio {
@@ -71,7 +71,7 @@ fn main() {
     cpu.add_device(Plic::new_device());
     cpu.add_device(Clint::new_device());
 
-    cpu.load_program_raw(include_bytes!("../../kernel.bin")).unwrap();
+    cpu.load_program_raw(&[]).unwrap();
 
     match cpu.run() {
         Ok(_) => (),

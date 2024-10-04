@@ -2,7 +2,7 @@ use crate::{
     bit_ops::zero_extend, bus::{Bus, VirtualDevice}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, log_debug, log_error, log_trace, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::Exception
+    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::{Exception, Trap}
 };
 use riscv_decoder::{
     decoded_inst::InstructionDecoded,
@@ -669,14 +669,21 @@ impl Cpu {
 
     pub fn step(&mut self) -> Result<(), Exception> {
         let inst = self.fetch()?;
-        self.execute(inst)?;
+        match self.execute(inst) {
+            Ok(_) => (),
+            Err(e) => if !e.is_fatal() {
+                e.take_trap(self);
+                return Ok(());
+            } else {
+                return Err(e);
+            },
+        }
         Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), Exception> {
         while !self.finished() {
-            let inst = self.fetch()?;
-            self.execute(inst)?;
+            self.step()?;
         }
         Ok(())
     }
