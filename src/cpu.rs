@@ -236,12 +236,14 @@ impl Cpu {
             }
             InstructionDecoded::Jalr { rd, rs1, imm } => {
                 log_trace!("JALR: rd: {rd}, rs1: {rs1}, imm: {imm}");
-
                 log_trace!("RA is currently: {:#X}", self.xregs[1]);
 
                 self.xregs[rd as usize] = self.pc;
+                log_trace!("rd = {:#X}", self.xregs[rd as usize]);
+
                 let (reg, imm) = (self.xregs[rs1 as usize] as i32, imm as i32);
                 let npc = reg.wrapping_add(imm) as XRegisterSize;
+
                 log_trace!("Jumping to {:#X}", npc);
                 self.pc = npc;
             }

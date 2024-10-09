@@ -64,7 +64,7 @@ use log::LevelFilter;
 // The main function
 // were going to test the Virtio implementation
 fn main() {
-    riscv_vm::logging::init_logging(LevelFilter::Debug);
+    riscv_vm::logging::init_logging(LevelFilter::Trace);
 
     let mut cpu = Cpu::new();
     cpu.add_device(Uart::new_device());

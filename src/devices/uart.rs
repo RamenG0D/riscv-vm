@@ -96,16 +96,13 @@ impl Device for Uart {
 
         match addr + UART_BASE {
             UART_RHR => {
-                // TODO: USE LESS HACKY SOULUTION ASAP
-                // Actually i just realized this should be fine, since we only acces and write based on constants
-                // so its impossible to end up out of bounds
-                // but still maybe fix this later :)
                 lock.notify_one();
                 let mut mem = mem.lock().expect("Failed to get mutex lock");
                 mem[(UART_LSR - UART_BASE) as usize] &= !UART_LSR_RX;
                 Ok(mem[(UART_LSR - UART_BASE) as usize] as u32)
             },
             _ => {
+                lock.notify_one();
                 let mem = mem.lock().expect("Failed to get mutex lock");
                 Ok(mem[addr as usize] as u32)
             }
