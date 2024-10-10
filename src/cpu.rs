@@ -398,7 +398,6 @@ impl Cpu {
                 self.bus.write(addr, value, Sizes::Word)?;
             }
             InstructionDecoded::ECall => {
-                log_trace!("ECALL");
                 match self.mode {
                     Mode::User => {
                         log_trace!("ECall => User mode");
