@@ -730,7 +730,7 @@ impl Cpu {
             Ok(_) => (),
             Err(Exception::Breakpoint) => {
                 // breakpoints are just used to stop the execution
-                return Ok(());
+                return Err(Exception::Breakpoint); // but we also want to pass the exception to the caller
             }
             Err(e) => if !e.is_fatal() {
                 e.take_trap(self);
