@@ -1,3 +1,0 @@
-[submodule "xv6-rv32"]
-	path = xv6-rv32
-	url = https://github.com/michaelengel/xv6-rv32.git
