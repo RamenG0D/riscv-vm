@@ -71,7 +71,15 @@ fn main() {
     cpu.add_device(Plic::new_device());
     cpu.add_device(Clint::new_device());
 
-    cpu.load_program_raw(include_bytes!("../../c_test/fib.bin")).unwrap();
+    // get the file path from the args
+    let args = std::env::args().collect::<Vec<String>>();
+    // get the first arg
+    let a0 = if args.len() >= 2 {
+        &args[1]
+    } else {
+        eprintln!("Please provide a *.bin file to emulate and add its path as an argument to run the program");
+        return;
+    };
 
     match cpu.run() {
         Ok(_) => (),

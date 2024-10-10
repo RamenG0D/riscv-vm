@@ -728,6 +728,10 @@ impl Cpu {
         let inst = self.fetch()?;
         match self.execute(inst) {
             Ok(_) => (),
+            Err(Exception::Breakpoint) => {
+                // breakpoints are just used to stop the execution
+                return Ok(());
+            }
             Err(e) => if !e.is_fatal() {
                 e.take_trap(self);
                 return Ok(());
