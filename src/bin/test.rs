@@ -81,12 +81,7 @@ fn main() {
         return;
     };
 
-    match cpu.run() {
-        Ok(_) => (),
-        Err(Exception::IllegalInstruction) => eprintln!("Illegal Instruction"),
-        Err(Exception::LoadAccessFault) => eprintln!("Load Access Fault"),
-        Err(e) => eprintln!("Trap / Err: {e:#?}"),
-    }
+    cpu.run();
 
     log_info!("Finished running the program!");
 }

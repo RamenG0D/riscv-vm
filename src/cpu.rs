@@ -34,7 +34,7 @@ pub struct Cpu {
     bus: Bus,
 
     /// Csr controller
-    state: State,
+    pub state: State,
 }
 
 impl Cpu {
@@ -126,8 +126,7 @@ impl Cpu {
 
         // decode the instruction (automatically detects if compressed)
         try_decode(inst).map_err(|e| {
-            log_error!("Failed to decode instruction: {:#X} => {e:?}", inst);
-            Exception::IllegalInstruction
+            log_error!("{e:?}"); Exception::IllegalInstruction(inst)
         })
     }
 
@@ -729,29 +728,29 @@ impl Cpu {
         self.pc >= (DRAM_BASE + DRAM_SIZE) as XRegisterSize
     }
 
-    pub fn step(&mut self) -> Result<(), Exception> {
-        let inst = self.fetch()?;
-        match self.execute(inst) {
-            Ok(_) => (),
-            Err(Exception::Breakpoint) => {
-                // breakpoints are just used to stop the execution
-                return Err(Exception::Breakpoint); // but we also want to pass the exception to the caller
+    pub fn step(&mut self) {
+        let inst = self.fetch().expect("Failed to fetch instruction");
+        // Execute an instruction.
+        let trap = match self.execute(inst) {
+            Ok(_) => {
+                // Return a placeholder trap.
+                Trap::Requested
             }
-            Err(e) => if !e.is_fatal() {
-                e.take_trap(self);
-                return Ok(());
-            } else {
-                return Err(e);
-            },
+            Err(exception) => exception.take_trap(self),
+        };
+
+        match trap {
+            Trap::Fatal => {
+                println!("pc: {:#x}, trap {:#?}", self.get_pc(), trap);
+            }
+            _ => {}
         }
-        Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), Exception> {
+    pub fn run(&mut self) {
         while !self.finished() {
-            self.step()?;
+            self.step();
         }
-        Ok(())
     }
 
     pub fn load_program_raw(&mut self, program: &[u8]) -> Result<(), Exception> {
