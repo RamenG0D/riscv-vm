@@ -728,29 +728,29 @@ impl Cpu {
         self.pc >= (DRAM_BASE + DRAM_SIZE) as XRegisterSize
     }
 
-    pub fn step(&mut self) {
-        let inst = self.fetch().expect("Failed to fetch instruction");
+    pub fn step(&mut self) -> Result<(), Exception> {
+        let inst = self.fetch()?;
         // Execute an instruction.
         let trap = match self.execute(inst) {
-            Ok(_) => {
-                // Return a placeholder trap.
-                Trap::Requested
-            }
+            Ok(_) => Trap::Requested, // Return a placeholder trap
             Err(exception) => exception.take_trap(self),
         };
 
         match trap {
             Trap::Fatal => {
-                println!("pc: {:#x}, trap {:#?}", self.get_pc(), trap);
+                log_error!("pc: {:#x}, trap {:#?}", self.get_pc(), trap);
             }
-            _ => {}
+            _ => (),
         }
+
+        Ok(())
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), Exception> {
         while !self.finished() {
-            self.step();
+            self.step()?;
         }
+        Ok(())
     }
 
     pub fn load_program_raw(&mut self, program: &[u8]) -> Result<(), Exception> {
