@@ -1,5 +1,5 @@
 use crate::{
-    bit_ops::zero_extend, bus::{Bus, VirtualDevice}, convert_memory, csr::{Csr, Mode, MEPC, MSTATUS, SEPC, SSTATUS}, log_debug, log_error, log_trace, memory::{
+    bit_ops::zero_extend, bus::{Bus, VirtualDevice}, convert_memory, csr::{State, MEPC, MSTATUS, SEPC, SSTATUS}, log_debug, log_error, log_trace, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
     }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::{Exception, Trap}
@@ -9,6 +9,14 @@ use riscv_decoder::{
     instructions::compressed::is_compressed,
     decoder::try_decode,
 };
+
+/// The privilege mode of the CPU.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum Mode {
+    User = 0b00,
+    Supervisor = 0b01,
+    Machine = 0b11,
+}
 
 // 32 bit RiscV CPU architecture
 pub struct Cpu {
@@ -26,7 +34,7 @@ pub struct Cpu {
     bus: Bus,
 
     /// Csr controller
-    state: Csr,
+    state: State,
 }
 
 impl Cpu {
@@ -41,7 +49,7 @@ impl Cpu {
             pc: DRAM_BASE,
             mode: Mode::Machine,
             bus: Bus::new(),
-            state: Csr::new(),
+            state: State::new(),
         };
         log_trace!("CPU initialized");
         cpu
@@ -74,13 +82,11 @@ impl Cpu {
         self.pc = pc;
     }
 
-    pub fn read_csr(&self, addr: u32) -> u32 {
-        self.state.read_csr(addr).expect("Failed to read CSR")
+    pub fn read_csr(&self, addr: u16) -> u32 {
+        self.state.read(addr)
     }
-    pub fn write_csr(&mut self, addr: u32, value: u32) {
-        self.state
-            .write_csr(addr, value)
-            .expect("Failed to write CSR");
+    pub fn write_csr(&mut self, addr: u16, value: u32) {
+        self.state.write(addr, value)
     }
 
     pub fn get_register(&self, register: XRegisterSize) -> Result<&XRegisterSize, String> {
@@ -487,43 +493,43 @@ impl Cpu {
             InstructionDecoded::CsrRw { rd, rs1, imm } => {
                 log_trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                let t = self.read_csr(imm);
-                self.write_csr(imm, self.xregs[rs1 as usize]);
+                let t = self.read_csr(imm as u16);
+                self.write_csr(imm as u16, self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRs { rd, rs1, imm } => {
                 log_trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                let t = self.read_csr(imm);
+                let t = self.read_csr(imm as u16);
                 log_trace!("OLD CSR: {:#X}", t);
-                self.write_csr(imm, t | self.xregs[rs1 as usize]);
+                self.write_csr(imm as u16, t | self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRc { rd, rs1, imm } => {
                 log_trace!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                let t = self.read_csr(imm);
-                self.write_csr(imm, t & (!self.xregs[rs1 as usize]));
+                let t = self.read_csr(imm as u16);
+                self.write_csr(imm as u16, t & (!self.xregs[rs1 as usize]));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRwi { rd, rs1, imm } => {
                 log_trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                self.xregs[rd as usize] = self.read_csr(imm);
-                self.write_csr(imm, rs1);
+                self.xregs[rd as usize] = self.read_csr(imm as u16);
+                self.write_csr(imm as u16, rs1);
             }
             InstructionDecoded::CsrRsi { rd, rs1, imm } => {
                 log_trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                let t = self.read_csr(imm);
-                self.write_csr(imm, t | rs1);
+                let t = self.read_csr(imm as u16);
+                self.write_csr(imm as u16, t | rs1);
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::CsrRci { rd, rs1, imm } => {
                 log_trace!("CSRRCI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 log_trace!("value of rd = {}, value of rs1 = {}", self.xregs[rd as usize], self.xregs[rs1 as usize]);
-                let t = self.read_csr(imm);
-                self.write_csr(imm, t & (!rs1));
+                let t = self.read_csr(imm as u16);
+                self.write_csr(imm as u16, t & (!rs1));
                 self.xregs[rd as usize] = t;
             }
             InstructionDecoded::Slti { rd, rs1, imm } => {

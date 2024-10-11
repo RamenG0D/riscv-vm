@@ -1,7 +1,7 @@
 use crate::{
-    cpu::Cpu,
+    cpu::{Cpu, Mode},
     csr::{
-        Mode, MCAUSE, MEDELEG, MEPC, MSTATUS, MTVAL, MTVEC, SCAUSE, SEPC, SSTATUS, STVAL, STVEC,
+        MCAUSE, MEDELEG, MEPC, MSTATUS, MTVAL, MTVEC, SCAUSE, SEPC, SSTATUS, STVAL, STVEC,
     },
     memory::virtual_memory::MemorySize,
 };
