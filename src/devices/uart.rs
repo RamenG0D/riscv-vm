@@ -1,16 +1,27 @@
-use std::{io::Write, sync::{atomic::{AtomicBool, Ordering}, Arc, Condvar, Mutex}, thread};
+use std::{
+    io::Write,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    thread,
+};
 
-use crate::{bus::{Device, VirtualDevice}, memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception};
+use crate::{
+    bus::{Device, VirtualDevice},
+    memory::{dram::Sizes, virtual_memory::MemorySize},
+    trap::Exception,
+};
 
 const UART_BASE: u32 = 0x1000_0000;
-const UART_END: u32 = UART_BASE + 0x100;
+// const UART_END: u32 = UART_BASE + 0x100;
 const UART_SIZE: u32 = 0x100;
-const UART_IRQ: u32 = 10;
+pub const UART_IRQ: u32 = 10;
 
 /// Receive holding register (for input bytes).
-const UART_RHR: u32 = UART_BASE + 0;
+const UART_RHR: u32 = UART_BASE;
 /// Transmit holding register (for output bytes).
-const UART_THR: u32 = UART_BASE + 0;
+const UART_THR: u32 = UART_BASE;
 /// Interrupt enable register.
 const _UART_IER: u32 = UART_BASE + 1;
 /// FIFO control register.
@@ -60,7 +71,7 @@ impl Uart {
         let _uart_thread_for_read = thread::spawn(move || loop {
             use std::io::Read;
             match std::io::stdin().read(&mut byte) {
-                Ok(_) => {
+                Ok(_v) => {
                     let (uart, cvar) = &*cloned_uart;
                     let mut uart = uart.lock().expect("failed to get an UART object");
                     // Wait for the thread to start up.
@@ -78,7 +89,14 @@ impl Uart {
             }
         });
 
-        Self { mem: uart, interrupting }
+        Self {
+            mem: uart,
+            interrupting,
+        }
+    }
+
+    pub fn is_interrupting(&self) -> bool {
+        self.interrupting.load(Ordering::Acquire)
     }
 
     pub fn new_device() -> VirtualDevice {
@@ -87,25 +105,26 @@ impl Uart {
 }
 
 impl Device for Uart {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
-        if !matches!(size, Sizes::Byte) || (addr < UART_BASE || addr >= UART_END) {
+        if !matches!(size, Sizes::Byte) {
             return Err(Exception::LoadAccessFault);
         }
 
-        let (mem, lock) = &*self.mem;
-
+        let (uart, cvar) = &*self.mem;
+        let mut uart = uart.lock().expect("failed to get an UART object");
         match addr + UART_BASE {
-            UART_RHR => {
-                lock.notify_one();
-                let mut mem = mem.lock().expect("Failed to get mutex lock");
-                mem[(UART_LSR - UART_BASE) as usize] &= !UART_LSR_RX;
-                Ok(mem[(UART_LSR - UART_BASE) as usize] as u32)
-            },
-            _ => {
-                lock.notify_one();
-                let mem = mem.lock().expect("Failed to get mutex lock");
-                Ok(mem[addr as usize] as u32)
+            UART_RHR /* The Uart Base */ => {
+                cvar.notify_one();
+                uart[(UART_LSR - UART_BASE) as usize] &= !UART_LSR_RX;
+                Ok(uart[(UART_RHR - UART_BASE) as usize] as u32)
             }
+            _ => Ok(uart[addr as usize] as u32),
         }
     }
     fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
@@ -113,19 +132,33 @@ impl Device for Uart {
             return Err(Exception::StoreAccessFault);
         }
 
-        let (mem, _) = &*self.mem;
-        let mut mem = mem.lock().expect("Failed to get mutex lock");
-
+        // An OS allows to write a byte to a UART when UART_LSR_TX is 1.
+        // e.g. (xv6):
+        //   // wait for Transmit Holding Empty to be set in LSR.
+        //   while((ReadReg(LSR) & (1 << 5)) == 0)
+        //   ;
+        //   WriteReg(THR, c);
+        //
+        // e.g. (riscv-pk):
+        //   while ((uart16550[UART_REG_LSR << uart16550_reg_shift] & UART_REG_STATUS_TX) == 0);
+        //   uart16550[UART_REG_QUEUE << uart16550_reg_shift] = ch;
+        let (uart, _cvar) = &*self.mem;
+        let mut uart = uart.lock().expect("failed to get an UART object");
         match addr + UART_BASE {
             UART_THR => {
                 print!("{}", value as u8 as char);
-                std::io::stdout().flush().expect("failed to flush standard i/o");
+                std::io::stdout().flush().expect("failed to flush stdout");
             }
             _ => {
-                mem[addr as usize] = value as u8;
+                uart[addr as usize] = value as u8;
             }
         }
-
         Ok(())
+    }
+}
+
+impl Default for Uart {
+    fn default() -> Self {
+        Self::new()
     }
 }

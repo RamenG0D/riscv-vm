@@ -1,13 +1,14 @@
 pub mod bus;
 pub mod cpu;
 pub mod csr;
+pub mod devices;
+pub mod interrupt;
 pub mod memory;
 pub mod registers;
+pub mod rom;
 pub mod trap;
-pub mod devices;
 
 #[cfg(feature = "logging")]
-#[cfg(debug_assertions)]
 pub mod logging {
     pub use colored;
     pub use fern;
@@ -60,11 +61,7 @@ pub mod logging {
         Dispatch::new()
             .format(move |out, message, record| {
                 out.finish(format_args!(
-                    "[{level}][{target}][{date}][{time}] {message}",
-                    date = chrono::Local::now()
-                        .format("%d-%m-%Y")
-                        .to_string()
-                        .color(Color::Green),
+                    "[{level}][{target}][{time}] {message}",
                     time = chrono::Local::now()
                         .format("%H:%M:%S")
                         .to_string()
@@ -78,37 +75,6 @@ pub mod logging {
             .chain(std::io::stdout())
             .apply()
             .unwrap();
-    }
-}
-#[cfg(feature = "logging")]
-#[cfg(not(debug_assertions))]
-pub mod logging {
-    #[inline(always)]
-    pub fn init_logging<T>(_: T) {}
-
-    #[macro_export]
-    macro_rules! log_trace {
-        ($($arg:tt)*) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_debug {
-        ($($arg:tt)*) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_info {
-        ($($arg:tt)*) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_warn {
-        ($($arg:tt)*) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_error {
-        ($($arg:tt)*) => {};
     }
 }
 
@@ -167,6 +133,6 @@ pub mod bit_ops {
     pub use bit_ops::bitops_u32::*;
 
     pub fn zero_extend(value: u32) -> u32 {
-        clear_bit(value, 31)
+        clear_bit(value, 31) // riscv is little endian so the sign bit is the first bit
     }
 }

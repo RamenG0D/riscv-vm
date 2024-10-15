@@ -79,8 +79,8 @@ const SSTATUS_FS_MASK: u32 = 0x6000; // sstatus[14:13]
 const SSTATUS_XS_MASK: u32 = 0x18000; // sstatus[16:15]
 const SSTATUS_SUM_MASK: u32 = 0x40000; // sstatus[18]
 const SSTATUS_MXR_MASK: u32 = 0x80000; // sstatus[19]
-// const SSTATUS_UXL_MASK: u32 = 0x3_00000000; // sstatus[33:32]
-// const SSTATUS_SD_MASK: u32 = 0x80000000_00000000; // sstatus[63]
+                                       // const SSTATUS_UXL_MASK: u32 = 0x3_00000000; // sstatus[33:32]
+                                       // const SSTATUS_SD_MASK: u32 = 0x80000000_00000000; // sstatus[63]
 const SSTATUS_MASK: u32 = SSTATUS_SIE_MASK
     | SSTATUS_SPIE_MASK
     | SSTATUS_UBE_MASK
@@ -89,8 +89,8 @@ const SSTATUS_MASK: u32 = SSTATUS_SIE_MASK
     | SSTATUS_XS_MASK
     | SSTATUS_SUM_MASK
     | SSTATUS_MXR_MASK;
-    // | SSTATUS_UXL_MASK
-    // | SSTATUS_SD_MASK
+// | SSTATUS_UXL_MASK
+// | SSTATUS_SD_MASK
 /// Global interrupt-enable bit for supervisor mode.
 pub const XSTATUS_SIE: CsrFieldRange = 1..=1;
 /// Previous interrupt-enable bit for supervisor mode.
@@ -178,35 +178,30 @@ impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}",
-            format!(
-                "{}\n{}\n{}",
-                format!(
-                    "mstatus={:>#18x}   mtvec={:>#18x}    mepc={:>#18x}\n mcause={:>#18x} medeleg={:>#18x} mideleg={:>#18x}",
-                    self.read(MSTATUS),
-                    self.read(MTVEC),
-                    self.read(MEPC),
-                    self.read(MCAUSE),
-                    self.read(MEDELEG),
-                    self.read(MIDELEG),
-                ),
-                format!(
-                    "sstatus={:>#18x}   stvec={:>#18x}    sepc={:>#18x}\n scause={:>#18x} sedeleg={:>#18x} sideleg={:>#18x}",
-                    self.read(SSTATUS),
-                    self.read(STVEC),
-                    self.read(SEPC),
-                    self.read(SCAUSE),
-                    self.read(SEDELEG),
-                    self.read(SIDELEG),
-                ),
-                format!(
-                    "ustatus={:>#18x}   utvec={:>#18x}    uepc={:>#18x}\n ucause={:>#18x}",
-                    self.read(USTATUS),
-                    self.read(UTVEC),
-                    self.read(UEPC),
-                    self.read(UCAUSE),
-                ),
-            )
+            r#"
+mstatus={:>#18x}   mtvec={:>#18x}    mepc={:>#18x}
+mcause={:>#18x} medeleg={:>#18x} mideleg={:>#18x}
+sstatus={:>#18x}   stvec={:>#18x}    sepc={:>#18x}
+scause={:>#18x} sedeleg={:>#18x} sideleg={:>#18x}
+ustatus={:>#18x}   utvec={:>#18x}    uepc={:>#18x}
+ucause={:>#18x}
+"#,
+            self.read(MSTATUS),
+            self.read(MTVEC),
+            self.read(MEPC),
+            self.read(MCAUSE),
+            self.read(MEDELEG),
+            self.read(MIDELEG),
+            self.read(SSTATUS),
+            self.read(STVEC),
+            self.read(SEPC),
+            self.read(SCAUSE),
+            self.read(SEDELEG),
+            self.read(SIDELEG),
+            self.read(USTATUS),
+            self.read(UTVEC),
+            self.read(UEPC),
+            self.read(UCAUSE),
         )
     }
 }
@@ -217,34 +212,46 @@ impl State {
         let mut csrs = [0; CSR_SIZE];
         bitfield::bitfield! {
             struct MisaFlags(u32);
-            impl new;
-            u32;
-            // whether or not xlen=32
-            xlen_val, xlen: 8, 8;
-            m, m_ext: 12, 12;
-            a, a_ext: 0, 0;
-            f, f_ext: 5, 5;
-            d, d_ext: 3, 3;
-            q, q_ext: 16, 16;
-            c, c_ext: 2, 2;
-            l, l_ext: 11, 11;
-            b, b_ext: 1, 1;
-            j, j_ext: 9, 9;
-            p, p_ext: 15, 15;
-            v, v_ext: 21, 21;
-            n, n_ext: 13, 13;
-            g, g_ext: 6, 6;
-            h, h_ext: 7, 7;
-            x, x_ext: 23, 23;
-            supervisor_val, supervisor: 18, 18;
-            user_val, user: 20, 20;
+            _, a_ext: 0; // standard A extension for atomic instructions is supported
+            _, b_ext: 1; // Tentatively reserved for Bit-Manipulation extension
+            _, c_ext: 2; // standard C extension for 16-bit compressed instructions is supported
+            _, d_ext: 3; // standard D extension for double-precision floating-point is supported
+            _, e_ext: 4; // RV32E base ISA
+            _, f_ext: 5; // standard F extension for single-precision floating-point is supported
+            _, g_ext: 6; // reserved
+            _, h_ext: 7; // Hypervisor extension
+            _, i_ext: 8; // RV32I/64I/128I base ISA
+            _, j_ext: 9; // Tentatively reserved for Dynamically Translated Languages extension
+            _, k_ext: 10; // reserved
+            _, l_ext: 11; // reserved
+            _, m_ext: 12; // Integer Multiply/Divide extension
+            _, n_ext: 13; // Tentatively reserved for User-Level Interrupts extension
+            _, o_ext: 14; // reserved
+            _, p_ext: 15; // Tentatively reserved for Packed-SIMD extension
+            _, q_ext: 16; // Quad-precision floating-point extension
+            _, r_ext: 17; // reserved
+            _, supervisor: 18; // Supervisor mode implemented
+            _, t_ext: 19; // reserved
+            _, user: 20; // User mode implemented
+            _, v_ext: 21; // Tentatively reserved for Vector extension
+            _, w_ext: 22; // reserved
+            _, x_ext: 23; // non-standard extensions
+            _, y_ext: 24; // reserved
+            _, z_ext: 25; // reserved
         }
         impl MisaFlags {
             pub fn inner(&self) -> u32 {
                 self.0
             }
         }
-        let misa = MisaFlags::new(1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+        let mut misa = MisaFlags(0);
+        misa.user(true);
+        misa.supervisor(true);
+        misa.m_ext(true);
+        misa.a_ext(true);
+        misa.f_ext(true);
+        misa.i_ext(true);
+
         csrs[MISA as usize] = misa.inner();
 
         Self { csrs }
@@ -282,17 +289,15 @@ impl State {
         // machine-mode CSR, and the machinemode chapter should be read first to help understand
         // the supervisor-level CSR descriptions."
         match addr {
-            MVENDORID => {}
-            MARCHID => {}
-            MIMPID => {}
-            MHARTID => {}
+            MVENDORID => (),
+            MARCHID => (),
+            MIMPID => (),
+            MHARTID => (),
             SSTATUS => {
-                self.csrs[MSTATUS as usize] =
-                    (self.csrs[MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
+                self.csrs[MSTATUS as usize] = (self.csrs[MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
             }
             SIE => {
-                self.csrs[MIE as usize] = (self.csrs[MIE as usize] & !self.csrs[MIDELEG as usize])
-                    | (val & self.csrs[MIDELEG as usize]);
+                self.csrs[MIE as usize] = (self.csrs[MIE as usize] & !self.csrs[MIDELEG as usize]) | (val & self.csrs[MIDELEG as usize]);
             }
             SIP => {
                 let mask = SSIP_BIT & self.csrs[MIDELEG as usize];
@@ -325,12 +330,12 @@ impl State {
 
         // Bitmask for high bits.
         let mut bitmask = 0;
-        if range.end != 64 {
+        if range.end != MXLEN {
             bitmask = !0 << range.end;
         }
 
         // Shift away low bits.
-        (self.read(addr) as u32 & !bitmask) >> range.start
+        (self.read(addr) & !bitmask) >> range.start
     }
 
     /// Write a bit to the CSR.
@@ -387,40 +392,7 @@ impl State {
 
     /// Reset all the CSRs.
     pub fn reset(&mut self) {
-        self.csrs = [0; CSR_SIZE];
-        bitfield::bitfield! {
-            struct MisaFlags(u32);
-            impl new;
-            u32;
-            // whether or not xlen=32
-            xlen_val, xlen: 8, 8;
-            m, m_ext: 12, 12;
-            a, a_ext: 0, 0;
-            f, f_ext: 5, 5;
-            d, d_ext: 3, 3;
-            q, q_ext: 16, 16;
-            c, c_ext: 2, 2;
-            l, l_ext: 11, 11;
-            b, b_ext: 1, 1;
-            j, j_ext: 9, 9;
-            p, p_ext: 15, 15;
-            v, v_ext: 21, 21;
-            n, n_ext: 13, 13;
-            g, g_ext: 6, 6;
-            h, h_ext: 7, 7;
-            x, x_ext: 23, 23;
-            supervisor_val, supervisor: 18, 18;
-            user_val, user: 20, 20;
-        }
-        impl MisaFlags {
-            pub fn inner(&self) -> u32 {
-                self.0
-            }
-        }
-
-        let misa = MisaFlags::new(1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
-
-        self.csrs[MISA as usize] = misa.inner();
+        *self = Self::new();
     }
 }
 
@@ -438,4 +410,10 @@ fn to_range<T: RangeBounds<usize>>(generic_range: &T, bit_length: usize) -> Rang
     };
 
     start..end
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::new()
+    }
 }

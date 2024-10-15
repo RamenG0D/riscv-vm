@@ -3,7 +3,7 @@ use std::ops::{Index, IndexMut};
 pub const REGISTERS_COUNT: usize = 32;
 
 pub type XRegisterSize = u32;
-pub type FRegisterSize = u32;
+pub type FRegisterSize = f32;
 
 pub struct XRegisters {
     regs: [XRegisterSize; REGISTERS_COUNT],
@@ -39,6 +39,12 @@ impl XRegisters {
     }
 }
 
+impl Default for XRegisters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct FRegisters {
     regs: [FRegisterSize; REGISTERS_COUNT],
 }
@@ -54,7 +60,7 @@ impl Index<usize> for FRegisters {
 impl FRegisters {
     pub fn new() -> Self {
         Self {
-            regs: [0; REGISTERS_COUNT],
+            regs: [0.0; REGISTERS_COUNT],
         }
     }
 
@@ -64,5 +70,11 @@ impl FRegisters {
 
     pub fn set(&mut self, index: usize, value: FRegisterSize) {
         self.regs[index] = value;
+    }
+}
+
+impl Default for FRegisters {
+    fn default() -> Self {
+        Self::new()
     }
 }

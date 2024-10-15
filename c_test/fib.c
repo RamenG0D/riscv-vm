@@ -7,7 +7,7 @@ int main(void) {
     int i = fib(14);
 
     // print value of i
-    rprintf("Value: &d\n", i);
+    printf("Value: %d\n", i);
 
     return 0;
 }

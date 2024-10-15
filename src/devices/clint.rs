@@ -1,5 +1,9 @@
-use crate::{bus::{Device, VirtualDevice}, log_error, memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception};
-
+use crate::{
+    bus::{Device, VirtualDevice},
+    csr::{State, MIP, MSIP_BIT, MTIP_BIT},
+    memory::{dram::Sizes, virtual_memory::MemorySize},
+    trap::Exception,
+};
 
 const CLINT_BASE: u32 = 0x2000000;
 const CLINT_END: u32 = CLINT_BASE + 0x10000;
@@ -29,6 +33,12 @@ pub struct Clint {
 }
 
 impl Device for Clint {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         self.read(addr, size)
     }
@@ -48,6 +58,35 @@ impl Clint {
 
     pub fn new_device() -> VirtualDevice {
         VirtualDevice::new(Box::new(Self::new()), CLINT_BASE, CLINT_END)
+    }
+
+    /// Increment the mtimer register. It's not a real-time value. The MTIP bit (MIP, 7) is enabled
+    /// when `mtime` is greater than or equal to `mtimecmp`.
+    pub fn increment(&mut self, state: &mut State) {
+        self.mtime = self.mtime.wrapping_add(1);
+        // Sync TIME csr.
+        // state.write(TIME, self.mtime);
+
+        if (self.msip & 1) != 0 {
+            // Enable the MSIP bit (MIP, 3).
+            state.write(MIP, state.read(MIP) | MSIP_BIT);
+        }
+
+        // 3.1.10 Machine Timer Registers (mtime and mtimecmp)
+        // "The interrupt remains posted until mtimecmp becomes greater than mtime (typically as a
+        // result of writing mtimecmp)."
+        if self.mtimecmp > self.mtime {
+            // Clear the MTIP bit (MIP, 7).
+            state.write(MIP, state.read(MIP) & !MTIP_BIT);
+        }
+
+        // 3.1.10 Machine Timer Registers (mtime and mtimecmp)
+        // "A timer interrupt becomes pending whenever mtime contains a value greater than or equal
+        // to mtimecmp, treating the values as unsigned integers."
+        if self.mtime >= self.mtimecmp {
+            // Enable the MTIP bit (MIP, 7).
+            state.write(MIP, state.read(MIP) | MTIP_BIT);
+        }
     }
 
     pub fn read(&self, addr: u32, size: Sizes) -> Result<u32, Exception> {
@@ -80,5 +119,11 @@ impl Clint {
         }
 
         Ok(())
+    }
+}
+
+impl Default for Clint {
+    fn default() -> Self {
+        Self::new()
     }
 }

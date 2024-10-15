@@ -6,12 +6,17 @@ prefix ()
 }
 
 IncludeFlag="-I."
-DEBUG_IMPL="debug.c"
 CFlags="-march=rv32ima -nostdlib -O3"
 
-prefix gcc $CFlags $IncludeFlag -S $1.c $DEBUG_IMPL
-prefix gcc $CFlags $IncludeFlag -Wl,-Ttext=0x80000000 -o $1 *.s
-prefix objcopy -O binary $1 $1.bin
+# get the filename without the extension
+C_FILE=$1
+FNAME=$(basename $1 .c)
+ASM=$FNAME.s
 
-rm $1.s
-rm $1
+prefix gcc $CFlags $IncludeFlag -S $C_FILE debug.c
+prefix gcc $CFlags $IncludeFlag -flto -Wl,-Ttext=0x80000000 -o $FNAME $ASM debug.s
+prefix objdump -M no-aliases -SD $FNAME > $FNAME.asm
+prefix objcopy -O binary $FNAME $FNAME.bin
+
+rm $ASM debug.s
+rm $FNAME

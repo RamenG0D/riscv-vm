@@ -71,8 +71,15 @@ impl<const L: usize> Memory<L> {
         Some(())
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         L
+    }
+}
+
+impl<const L: usize> Default for Memory<L> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -110,7 +117,7 @@ impl<const L: usize> HeapMemory<L> {
         if index > L as MemorySize {
             return Err(Exception::LoadAccessFault);
         }
-        Ok(self.memory[index as usize] as u8)
+        Ok(self.memory[index as usize])
     }
 
     pub fn set32(&mut self, index: MemorySize, value: MemorySize) -> Result<(), Exception> {
@@ -141,7 +148,14 @@ impl<const L: usize> HeapMemory<L> {
         Ok(())
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         L
+    }
+}
+
+impl<const L: usize> Default for HeapMemory<L> {
+    fn default() -> Self {
+        Self::new()
     }
 }

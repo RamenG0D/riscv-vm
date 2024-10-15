@@ -1,13 +1,14 @@
 use crate::{
-    log_error,
-    memory::{
-        dram::{Dram, Sizes, DRAM_BASE, DRAM_SIZE},
+    devices::{clint::Clint, plic::Plic, uart::Uart, viritio::Virtio}, log_error, memory::{
+        dram::{Dram, Sizes},
         virtual_memory::MemorySize,
-    },
-    trap::Exception,
+    }, rom::Rom, trap::Exception
 };
 
 pub trait Device {
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception>;
     fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception>;
 }
@@ -55,10 +56,41 @@ pub struct Bus {
 
 impl Bus {
     pub fn new() -> Self {
-        let dram = VirtualDevice::new(Box::new(Dram::new()), DRAM_BASE, DRAM_SIZE);
+
         Self {
-            devices: vec![dram],
+            devices: vec![
+                Dram::new_device(),
+                Rom::new_device(),
+                Uart::new_device(),
+                Plic::new_device(),
+                Clint::new_device(),
+                Virtio::new_device(),
+            ],
         }
+    }
+
+    pub fn get_device<T>(&self) -> Option<&T>
+    where
+        T: Device + 'static,
+    {
+        for device in &self.devices {
+            if let Some(device) = device.inner_device.as_any().downcast_ref::<T>() {
+                return Some(device);
+            }
+        }
+        None
+    }
+
+    pub fn get_device_mut<T>(&mut self) -> Option<&mut T>
+    where
+        T: Device + 'static,
+    {
+        for device in &mut self.devices {
+            if let Some(device) = device.inner_device.as_any_mut().downcast_mut::<T>() {
+                return Some(device);
+            }
+        }
+        None
     }
 
     pub fn add_device(&mut self, device: VirtualDevice) {
@@ -90,5 +122,11 @@ impl Bus {
         }
         log_error!("Bus Write StoreAMOAccessFault: {:#X}", address);
         Err(Exception::StoreAccessFault)
+    }
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
     }
 }
