@@ -1295,11 +1295,6 @@ impl Cpu {
         }
     }
 
-    #[inline]
-    pub fn finished(&self) -> bool {
-        self.pc >= (DRAM_BASE + DRAM_SIZE) as XRegisterSize
-    }
-
     /// Execute a cycle on peripheral devices.
     pub fn devices_increment(&mut self) {
         // TODO: mtime in Clint and TIME in CSR should be the same value.
