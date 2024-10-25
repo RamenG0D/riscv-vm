@@ -77,6 +77,46 @@ pub mod logging {
             .unwrap();
     }
 }
+#[cfg(not(feature = "logging"))]
+pub mod logging {
+    pub mod log {
+        pub enum LevelFilter {
+            Debug,
+            Trace,
+            Error,
+            Warn,
+            Info,
+            None,
+        }
+    }
+
+    #[macro_export]
+    macro_rules! log_trace {
+        ($($arg:tt)+) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_debug {
+        ($($arg:tt)+) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_info {
+        ($($arg:tt)+) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_warn {
+        ($($arg:tt)*) => {};
+    }
+
+    #[macro_export]
+    macro_rules! log_error {
+        ($($arg:tt)*) => {};
+    }
+
+    pub fn init_logging(_level: log::LevelFilter) {}
+}
 
 #[inline]
 /// Used to convert a slice of bytes to a slice of u32 and ensure that the ouput slice is little endian

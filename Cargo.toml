@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["rlib"]
 
 [features]
-default = ["logging"]
+default = []
 
 logging = ["dep:colored", "dep:log", "dep:fern"] # Enable for logging output
 
@@ -19,7 +19,7 @@ chrono = "0.4.38"
 # logging
 colored = { version = "2.1.0", optional = true }
 log = { version = "0.4.22", optional = true }
-fern = { version = "0.6.2", optional = true, features = ["colored"] }
+fern = { version = "0.7.0", optional = true, features = ["colored"] }
 thiserror = "1.0.65"
 
 [dependencies.devicetree-tool]
@@ -27,4 +27,4 @@ git = "https://github.com/RamenG0D/devicetree-tool.git"
 
 [dependencies.riscv-decoder]
 # git = "https://github.com/RamenG0D/riscv-decoder.git"
-path = "../riscv-decoder"
+path = "riscv-decoder"

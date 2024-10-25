@@ -1384,28 +1384,28 @@ impl Cpu {
             InstructionDecoded::CAddi4Spn { .. } => todo!(),
             InstructionDecoded::CNop { .. } => todo!(),
             InstructionDecoded::CSlli { .. } => todo!(),
-            InstructionDecoded::FcvtSD { rd, rs1 } => todo!(),
-            InstructionDecoded::FcvtDS { rd, rs1 } => todo!(),
-            InstructionDecoded::FmvXD { rd, rs1 } => todo!(),
-            InstructionDecoded::FmvDX { rd, rs1 } => todo!(),
-            InstructionDecoded::FaddD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FsubD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FmulD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FdivD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FsqrtD { rd, rs1 } => todo!(),
-            InstructionDecoded::FsgnjD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FsgnjnD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FsgnjxD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FminD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FmaxD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FcvtSD { .. } => todo!(),
+            InstructionDecoded::FcvtDS { .. } => todo!(),
+            InstructionDecoded::FmvXD { .. } => todo!(),
+            InstructionDecoded::FmvDX { .. } => todo!(),
+            InstructionDecoded::FaddD { .. } => todo!(),
+            InstructionDecoded::FsubD { .. } => todo!(),
+            InstructionDecoded::FmulD { .. } => todo!(),
+            InstructionDecoded::FdivD { .. } => todo!(),
+            InstructionDecoded::FsqrtD { .. } => todo!(),
+            InstructionDecoded::FsgnjD { .. } => todo!(),
+            InstructionDecoded::FsgnjnD { .. } => todo!(),
+            InstructionDecoded::FsgnjxD { .. } => todo!(),
+            InstructionDecoded::FminD { .. } => todo!(),
+            InstructionDecoded::FmaxD { .. } => todo!(),
             InstructionDecoded::FeqD { rd, rs1, rs2 } => {
                 let rs1 = self.fregs[rs1 as usize];
                 let rs2 = self.fregs[rs2 as usize];
                 self.xregs[rd as usize] = if rs1 == rs2 { 1 } else { 0 };
             }
-            InstructionDecoded::FltD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FleD { rd, rs1, rs2 } => todo!(),
-            InstructionDecoded::FClassD { rd, rs1 } => todo!(),
+            InstructionDecoded::FltD { .. } => todo!(),
+            InstructionDecoded::FleD { .. } => todo!(),
+            InstructionDecoded::FClassD { .. } => todo!(),
         }
 
         Ok(())
@@ -1427,8 +1427,8 @@ impl Cpu {
             "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
             "t3", "t4", "t5", "t6",
         ];
-        log_trace!("{:-^80}", "registers");
-        log_trace!("{:3}({:^4}) = {:<#18x}", "pc", "pc", self.pc);
+        log_info!("{:-^80}", "registers");
+        log_info!("{:3}({:^4}) = {:<#18x}", "pc", "pc", self.pc);
         self.xregs[0] = 0;
         for i in (0..32).step_by(4) {
             let (i0, i1, i2, i3) = (
@@ -1444,7 +1444,7 @@ impl Cpu {
                 i2, RVABI[i + 2], self.xregs[i + 2],
                 i3, RVABI[i + 3], self.xregs[i + 3],
             );
-            log_trace!("{line}");
+            log_info!("{}", line);
         }
     }
 
