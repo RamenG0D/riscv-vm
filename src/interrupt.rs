@@ -1,7 +1,7 @@
 //! The interrupt module contains all the interrupt kinds and the function to handle interrupts.
 
 use crate::{
-    bit_ops::*, cpu::{Cpu, Mode}, csr::*, log_debug, log_info
+    bit_ops::*, cpu::{Cpu, Mode}, csr::*, log_debug, log_info, memory::dram::Sizes
 };
 
 /// All the interrupt kinds.
@@ -35,7 +35,7 @@ impl Interrupt {
 
     /// Update CSRs and the program counter depending on an interrupt.
     pub fn take_trap(&self, cpu: &mut Cpu) {
-        log_info!("Taking a trap: {:?}", self);
+        log_info!("Taking a interrupt trap: {:?}", self);
 
         // 1.2 Privilege Levels
         // "Traps that increase privilege level are termed vertical traps, while traps that remain
@@ -61,7 +61,7 @@ impl Interrupt {
             && ((cpu.state().read(MIDELEG) >> cause) & 1) == 1
             && cause != Interrupt::MachineTimerInterrupt.exception_code()
         {
-            log_debug!("Handling Trap in S-mode");
+            log_debug!("Handling Interrupt Trap in S-mode");
 
             // Handle the trap in S-mode.
             cpu.set_mode(Mode::Supervisor);
@@ -72,7 +72,7 @@ impl Interrupt {
                 1 => 4 * cause, // vectored mode
                 _ => 0,         // direct mode
             };
-            cpu.set_pc(clear_bit(cpu.state().read(STVEC) + vector, 0));
+            cpu.set_pc(clear_bit(cpu.state().read(STVEC), 0) + vector);
 
             // 4.1.9 Supervisor Exception Program Counter (sepc)
             // "The low bit of sepc (sepc[0]) is always zero."
@@ -113,7 +113,7 @@ impl Interrupt {
                 _ => cpu.state_mut().write_sstatus(XSTATUS_SPP, 1),
             }
         } else {
-            log_debug!("Taking the trap in the Machine mode");
+            log_debug!("Taking the Interrupt trap in the Machine mode");
 
             // Handle the trap in M-mode.
             cpu.set_mode(Mode::Machine);
@@ -124,8 +124,7 @@ impl Interrupt {
                 1 => 4 * cause, // vectored mode
                 _ => 0,         // direct mode
             };
-            log_info!("Trap vector: {:#X}", vector);
-            cpu.set_pc(clear_bit(cpu.state().read(MTVEC) + vector, 0));
+            cpu.set_pc(clear_bit(cpu.state().read(MTVEC), 0) + vector);
             log_debug!("Trap handler address: {:#X}", cpu.get_pc());
 
             // 3.1.15 Machine Exception Program Counter (mepc)
@@ -134,7 +133,9 @@ impl Interrupt {
             // the instruction that was interrupted or that encountered the exception.
             // Otherwise, mepc is never written by the implementation, though it may be
             // explicitly written by software."
-            cpu.state_mut().write(MEPC, clear_bit(exception_pc, 0));
+            log_debug!("Interrupt Exception PC: {:#X}", exception_pc);
+            log_debug!("Previous Interrupt PC: {:#X}", cpu.state().read(MEPC));
+            cpu.state_mut().write(MEPC, exception_pc);
 
             // 3.1.16 Machine Cause Register (mcause)
             // "When a trap is taken into M-mode, mcause is written with a code indicating

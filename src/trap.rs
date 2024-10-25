@@ -1,12 +1,16 @@
 //! The exception module contains all the exception kinds and the function to handle exceptions.
 
+use std::fmt;
+
+use thiserror::Error;
+
 use crate::{
     cpu::{Cpu, Mode},
     csr::*, bit_ops::*,
 };
 
 /// All the exception kinds.
-#[derive(Debug, PartialEq)]
+#[derive(Error, PartialEq)]
 pub enum Exception {
     /// With the addition of the C extension, no instructions can raise
     /// instruction-address-misaligned exceptions.
@@ -25,6 +29,48 @@ pub enum Exception {
     InstructionPageFault(u32),
     LoadPageFault(u32),
     StorePageFault(u32),
+}
+
+impl fmt::Debug for Exception {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Exception::InstructionAddressMisaligned => write!(f, "Instruction address misaligned"),
+            Exception::InstructionAccessFault => write!(f, "Instruction access fault"),
+            Exception::IllegalInstruction(val) => write!(f, "Illegal instruction({:#010x})", val),
+            Exception::Breakpoint => write!(f, "Breakpoint"),
+            Exception::LoadAddressMisaligned => write!(f, "Load address misaligned"),
+            Exception::LoadAccessFault => write!(f, "Load access fault"),
+            Exception::StoreAddressMisaligned => write!(f, "Store address misaligned"),
+            Exception::StoreAccessFault => write!(f, "Store access fault"),
+            Exception::EnvironmentCallFromUMode => write!(f, "Environment call from U-mode"),
+            Exception::EnvironmentCallFromSMode => write!(f, "Environment call from S-mode"),
+            Exception::EnvironmentCallFromMMode => write!(f, "Environment call from M-mode"),
+            Exception::InstructionPageFault(val) => write!(f, "InstructionPageFault({:#010x})", val),
+            Exception::LoadPageFault(val) => write!(f, "LoadPageFault({:#010x})", val),
+            Exception::StorePageFault(val) => write!(f, "StorePageFault({:#010x})", val),
+        }
+    }
+}
+
+impl fmt::Display for Exception {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Exception::InstructionAddressMisaligned => write!(f, "Instruction address misaligned"),
+            Exception::InstructionAccessFault => write!(f, "Instruction access fault"),
+            Exception::IllegalInstruction(val) => write!(f, "Illegal instruction: {:#010x}", val),
+            Exception::Breakpoint => write!(f, "Breakpoint"),
+            Exception::LoadAddressMisaligned => write!(f, "Load address misaligned"),
+            Exception::LoadAccessFault => write!(f, "Load access fault"),
+            Exception::StoreAddressMisaligned => write!(f, "Store address misaligned"),
+            Exception::StoreAccessFault => write!(f, "Store access fault"),
+            Exception::EnvironmentCallFromUMode => write!(f, "Environment call from U-mode"),
+            Exception::EnvironmentCallFromSMode => write!(f, "Environment call from S-mode"),
+            Exception::EnvironmentCallFromMMode => write!(f, "Environment call from M-mode"),
+            Exception::InstructionPageFault(val) => write!(f, "Instruction page fault: {:#010x}", val),
+            Exception::LoadPageFault(val) => write!(f, "Load page fault: {:#010x}", val),
+            Exception::StorePageFault(val) => write!(f, "Store page fault: {:#010x}", val),
+        }
+    }
 }
 
 /// All the trap kinds.

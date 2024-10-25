@@ -1,8 +1,5 @@
 use crate::{
-    bus::{Device, VirtualDevice},
-    csr::{State, MIP, MSIP_BIT, MTIP_BIT},
-    memory::{dram::Sizes, virtual_memory::MemorySize},
-    trap::Exception,
+    bus::{Device, VirtualDevice}, csr::{State, MIP, MSIP_BIT, MTIP_BIT}, log_debug, memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception
 };
 
 const CLINT_BASE: u32 = 0x2000000;
@@ -90,10 +87,11 @@ impl Clint {
     }
 
     pub fn read(&self, addr: u32, size: Sizes) -> Result<u32, Exception> {
-        let (reg, offset) = match addr + CLINT_BASE {
-            addr @ MSIP..=MSIP_END => (self.msip, addr - MSIP),
-            addr @ MTIMECMP..=MTIMECMP_END => (self.mtimecmp, addr - MTIMECMP),
-            addr @ MTIME..=MTIME_END => (self.mtime, addr - MTIME),
+        let addr = addr + CLINT_BASE;
+        let (reg, offset) = match addr {
+            MSIP..=MSIP_END => (self.msip, addr - MSIP),
+            MTIMECMP..=MTIMECMP_END => (self.mtimecmp, addr - MTIMECMP),
+            MTIME..=MTIME_END => (self.mtime, addr - MTIME),
             _ => return Err(Exception::LoadAccessFault),
         };
 
@@ -105,10 +103,14 @@ impl Clint {
     }
 
     pub fn write(&mut self, addr: u32, data: u32, size: Sizes) -> Result<(), Exception> {
-        let (reg, offset) = match addr + CLINT_BASE {
-            addr @ MSIP..=MSIP_END => (&mut self.msip, addr - MSIP),
-            addr @ MTIMECMP..=MTIMECMP_END => (&mut self.mtimecmp, addr - MTIMECMP),
-            addr @ MTIME..=MTIME_END => (&mut self.mtime, addr - MTIME),
+        let addr = addr + CLINT_BASE;
+
+        log_debug!("Writing to clint: {:#x}, {:#x}, {:?}", addr, data, size);
+
+        let (reg, offset) = match addr {
+            MSIP..=MSIP_END => (&mut self.msip, addr - MSIP),
+            MTIMECMP..=MTIMECMP_END => (&mut self.mtimecmp, addr - MTIMECMP),
+            MTIME..=MTIME_END => (&mut self.mtime, addr - MTIME),
             _ => return Err(Exception::StoreAccessFault),
         };
 

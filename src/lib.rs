@@ -17,22 +17,22 @@ pub mod logging {
 
     #[macro_export]
     macro_rules! log_trace {
-        ($($arg:tt)*) => {
-            log::trace!($($arg)*)
+        ($($arg:tt)+) => {
+            log::trace!($($arg)+)
         };
     }
 
     #[macro_export]
     macro_rules! log_debug {
-        ($($arg:tt)*) => {
-            log::debug!($($arg)*)
+        ($($arg:tt)+) => {
+            log::debug!($($arg)+)
         };
     }
 
     #[macro_export]
     macro_rules! log_info {
-        ($($arg:tt)*) => {
-            log::info!($($arg)*)
+        ($($arg:tt)+) => {
+            log::info!($($arg)+)
         };
     }
 
@@ -133,6 +133,6 @@ pub mod bit_ops {
     pub use bit_ops::bitops_u32::*;
 
     pub fn zero_extend(value: u32) -> u32 {
-        clear_bit(value, 31) // riscv is little endian so the sign bit is the first bit
+        clear_bit(value, 31)
     }
 }

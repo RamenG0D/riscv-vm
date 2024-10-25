@@ -4,121 +4,119 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#define null ((void*)0)
+#define UART(offset) (*(volatile char *)(0x10000000 + (offset)))
 
-#define true 1
-#define false 0
+///////////////////////////////////////////////////////////////////////////////
+// \author (c) Marco Paland (info@paland.com)
+//             2014-2019, PALANDesign Hannover, Germany
+//
+// \license The MIT License (MIT)
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+// \brief Tiny printf, sprintf and snprintf implementation, optimized for speed on
+//        embedded systems with a very limited resources.
+//        Use this instead of bloated standard/newlib printf.
+//        These routines are thread safe and reentrant.
+//
+///////////////////////////////////////////////////////////////////////////////
 
-#define UART(offset) (*(volatile char*)(0x10000000 + (offset)))
+#include <stdarg.h>
+#include <stddef.h>
 
-#define ATTRIBUTES __attribute__((always_inline))
-#define DEBUG_FN static inline
-#define FN_DEFINE(...) \
-    DEBUG_FN __VA_ARGS__ ATTRIBUTES; \
-    DEBUG_FN __VA_ARGS__
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// used to print a single character to the UART
-FN_DEFINE(void printc(char c)) {
-    UART(0) = c;
+void get_string(char* buffer, int size);
+int str2int(const char* str, int base);
+
+/**
+ * Output a character to a custom device like UART, used by the printf() function
+ * This function is declared here only. You have to write your custom implementation somewhere
+ * \param character Character to output
+ */
+void _putchar(char character);
+
+
+/**
+ * Tiny printf implementation
+ * You have to implement _putchar if you use printf()
+ * To avoid conflicts with the regular printf() API it is overridden by macro defines
+ * and internal underscore-appended functions like printf_() are used
+ * \param format A string that specifies the format of the output
+ * \return The number of characters that are written into the array, not counting the terminating null character
+ */
+#define printf printf_
+int printf_(const char* format, ...);
+
+
+/**
+ * Tiny sprintf implementation
+ * Due to security reasons (buffer overflow) YOU SHOULD CONSIDER USING (V)SNPRINTF INSTEAD!
+ * \param buffer A pointer to the buffer where to store the formatted string. MUST be big enough to store the output!
+ * \param format A string that specifies the format of the output
+ * \return The number of characters that are WRITTEN into the buffer, not counting the terminating null character
+ */
+#define sprintf sprintf_
+int sprintf_(char* buffer, const char* format, ...);
+
+
+/**
+ * Tiny snprintf/vsnprintf implementation
+ * \param buffer A pointer to the buffer where to store the formatted string
+ * \param count The maximum number of characters to store in the buffer, including a terminating null character
+ * \param format A string that specifies the format of the output
+ * \param va A value identifying a variable arguments list
+ * \return The number of characters that COULD have been written into the buffer, not counting the terminating
+ *         null character. A value equal or larger than count indicates truncation. Only when the returned value
+ *         is non-negative and less than count, the string has been completely written.
+ */
+#define snprintf  snprintf_
+#define vsnprintf vsnprintf_
+int  snprintf_(char* buffer, size_t count, const char* format, ...);
+int vsnprintf_(char* buffer, size_t count, const char* format, va_list va);
+
+
+/**
+ * Tiny vprintf implementation
+ * \param format A string that specifies the format of the output
+ * \param va A value identifying a variable arguments list
+ * \return The number of characters that are WRITTEN into the buffer, not counting the terminating null character
+ */
+#define vprintf vprintf_
+int vprintf_(const char* format, va_list va);
+
+
+/**
+ * printf with output function
+ * You may use this as dynamic alternative to printf() with its fixed _putchar() output
+ * \param out An output function which takes one character and an argument pointer
+ * \param arg An argument pointer for user data passed to output function
+ * \param format A string that specifies the format of the output
+ * \return The number of characters that are sent to the output function, not counting the terminating null character
+ */
+int fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...);
+
+
+#ifdef __cplusplus
 }
-
-// used to print a string to the UART
-FN_DEFINE(void print(const char* s)) {
-    for (int i = 0; s[i]; i++) {
-        printc(s[i]);
-    }
-}
-
-// used to print a binary integer to the UART
-FN_DEFINE(void print_bin(int i)) {
-    print("0b");
-    for (int j = 31; j >= 0; j--) {
-        printc((i & (1 << j)) ? '1' : '0');
-    }
-}
-
-// used to print a boolean to the UART
-FN_DEFINE(void print_bool(int b)) {
-    print(b ? "true" : "false");
-}
-
-// used to print a hex integer to the UART
-FN_DEFINE(void print_hex(unsigned int i)) {
-    print("0x");
-    for (int j = 7; j >= 0; j--) {
-        int nibble = (i >> (j * 4)) & 0xF;
-        printc(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
-    }
-}
-
-// used to print a pointer to the UART
-FN_DEFINE(void print_ptr(void* p)) {
-    // disables clangs error "bad_reinterpret_cast_small_int"
-    print_hex((unsigned int)(unsigned long long)p);
-}
-
-// used to print an integer to the UART
-FN_DEFINE(void print_int(int i)) {
-    if (i < 0) {
-        print("-");
-        i = -i;
-    }
-    if (i == 0) {
-        print("0");
-        return;
-    }
-    char buf[10];
-    int j = 0;
-    while (i) {
-        buf[j++] = '0' + (i % 10);
-        i /= 10;
-    }
-    while (j) {
-        printc(buf[--j]);
-    }
-}
-
-// used to print a float to the UART
-// FN_DEFINE(void print_float(float f);
-// used to print a double to the UART
-// FN_DEFINE(void print_double(double d);
-
-// used to exit the program with an exit code
-DEBUG_FN void exit(int code) __attribute__((noreturn)) ATTRIBUTES;
-DEBUG_FN void exit(int code) {
-    // since this is naked we need an asm equivalent to
-    print("Exit: "); print_int(code); printc('\n');
-    // load the code into t0
-    asm volatile (
-        "mv t0, %0"
-        :
-        : "r" (code)
-        : "t0"
-    );
-    // call the crash_exit function
-    // write the code (t0) to 0x00000000
-    asm volatile ("sw t0, 0(zero)");
-}
-
-// used to exit the program with an error message if something goes wrong
-// just uses exit and print under the hood
-DEBUG_FN void panic(const char *s) __attribute__((noreturn)) ATTRIBUTES;
-DEBUG_FN void panic(const char *s) {
-    print("Panicing!\n");
-    print(s);
-    exit(1);
-}
-
-// used to mimic the behavior of the C function printf
-void printf(const char* fmt, ...);
-
-#define assert(cond) if (!(cond)) { \
-    printf("Assertion failed: %s\n", #cond); \
-    exit(1); \
-}
-#define assert_eq(a, b) if ((a) != (b)) { \
-    printf("Assertion failed: %s != %s\n", #a, #b); \
-    exit(1); \
-}
+#endif
 
 #endif

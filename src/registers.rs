@@ -57,6 +57,12 @@ impl Index<usize> for FRegisters {
     }
 }
 
+impl IndexMut<usize> for FRegisters {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.regs[index]
+    }
+}
+
 impl FRegisters {
     pub fn new() -> Self {
         Self {

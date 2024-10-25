@@ -2,8 +2,7 @@ use crate::{
     bit_ops::*,
     bus::{Bus, Device, VirtualDevice},
     csr::{
-        State, MEIP_BIT, MEPC, MIE, MIP, MSIP_BIT, MSTATUS, MSTATUS_MIE, MSTATUS_MPP, MSTATUS_MPRV,
-        MTIP_BIT, SATP, SEIP_BIT, SEPC, SSIP_BIT, SSTATUS, STIP_BIT, XSTATUS_SIE,
+        State, MEIP_BIT, MEPC, MIE, MIP, MSIP_BIT, MSTATUS, MSTATUS_MIE, MSTATUS_MPP, MSTATUS_MPRV, MTIP_BIT, SATP, SEIP_BIT, SEPC, SSIP_BIT, SSTATUS, STIP_BIT, XSTATUS_SIE
     },
     devices::{
         clint::Clint,
@@ -63,7 +62,7 @@ pub struct Cpu {
     /// little endian memory / stack array
     bus: Bus,
 
-    /// SV39 paging flag.
+    /// SV32 paging flag.
     enable_paging: bool,
     /// Physical page number (PPN) × PAGE_SIZE (4096).
     page_table: u32,
@@ -241,8 +240,10 @@ impl Cpu {
         let mode = self.state.read_bit(SATP, 31);
         log_info!("Mode: {:#X}", mode);
 
-        // Enable the SV39 paging if the value of the mode field is 8.
-        self.enable_paging = mode == 8;
+        // Enable the SV32 paging if the value of the mode field is 8.
+        log_info!("Mode: {:#X}", mode);
+        let mode = mode == 1;
+        self.enable_paging = mode;
         log_info!("Paging is enabled: {}", self.enable_paging);
     }
 
@@ -281,14 +282,12 @@ impl Cpu {
             .expect("UART is not found")
             .is_interrupting()
         {
-            log_info!("UART interrupt");
             irq = UART_IRQ;
         } else if self
             .get_device_mut::<Virtio>()
             .expect("Virtio is not found")
             .is_interrupting()
         {
-            log_info!("Virtio interrupt");
             // An interrupt is raised after a disk access is done.
             Virtio::disk_access(self).expect("failed to access the disk");
             irq = VIRTIO_IRQ;
@@ -412,7 +411,7 @@ impl Cpu {
         // 4.3.2 Virtual Address Translation Process
         // (The RISC-V Instruction Set Manual Volume II-Privileged Architecture_20190608)
         // A virtual address va is translated into a physical address pa as follows:
-        let levels = 2;
+        const LEVELS: i32 = 2;
         let vpn = [
             (addr >> 12) & 0x1ff,
             (addr >> 21) & 0x1ff,
@@ -422,7 +421,7 @@ impl Cpu {
         // 1. Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1. (For Sv32, PAGESIZE=212
         //    and LEVELS=2.)
         let mut a = self.page_table;
-        let mut i: i32 = levels - 1;
+        let mut i: i32 = LEVELS - 1;
         let mut pte;
         const PTE_SIZE: u32 = 4;
         loop {
@@ -483,23 +482,16 @@ impl Cpu {
         // 6. If i > 0 and pte.ppn[i−1:0] != 0, this is a misaligned superpage; stop and
         //    raise a page-fault exception corresponding to the original access type.
         let ppn = [
-            (pte.ppn() >> 10) & 0x1ff,
-            (pte.ppn() >> 19) & 0x1ff,
-            (pte.ppn() >> 28) & 0x03ff_ffff,
+            (pte.ppn() >> 10) & 0x3ff,
+            (pte.ppn() >> 20) & 0x3ff,
+            (pte.ppn() >> 30) & 0x3ff,
         ];
-        if i > 0 {
-            for j in (0..i).rev() {
-                if ppn[j as usize] != 0 {
-                    // A misaligned superpage.
-                    match access_type {
-                        AccessType::Instruction => {
-                            return Err(Exception::InstructionPageFault(addr))
-                        }
-                        AccessType::Load => return Err(Exception::LoadPageFault(addr)),
-                        AccessType::Store => return Err(Exception::StorePageFault(addr)),
-                    }
-                }
-            }
+        if i > 0 && ppn[i as usize - 1] != 0 {
+            return match access_type {
+                AccessType::Instruction => Err(Exception::InstructionPageFault(addr)),
+                AccessType::Load => Err(Exception::LoadPageFault(addr)),
+                AccessType::Store => Err(Exception::StorePageFault(addr)),
+            };
         }
 
         // 7. If pte.a = 0, or if the memory access is a store and pte.d = 0, either raise
@@ -578,7 +570,7 @@ impl Cpu {
             Exception::IllegalInstruction(inst)
         })?;
 
-        log_debug!("{:#08X}: {}", p_pc, inst);
+        log_debug!("{p_pc:#08X}: {inst}");
 
         Ok(inst)
     }
@@ -593,7 +585,7 @@ impl Cpu {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 log_trace!("rs1 = {rs1}, rs2 = {rs2}");
-                self.xregs[rd as usize] = rs1.wrapping_add(rs2) as XRegisterSize;
+                self.xregs[rd as usize] = (rs1 + rs2) as XRegisterSize;
             }
             InstructionDecoded::Addi { rd, rs1, imm } => {
                 log_trace!("ADDI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
@@ -604,7 +596,7 @@ impl Cpu {
                 log_trace!("SUB: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = rs1.wrapping_sub(rs2) as XRegisterSize;
+                self.xregs[rd as usize] = (rs1 - rs2) as XRegisterSize;
             }
             InstructionDecoded::And { rd, rs1, rs2 } => {
                 log_trace!("AND: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -654,9 +646,9 @@ impl Cpu {
             }
             InstructionDecoded::Srl { rd, rs1, rs2 } => {
                 log_trace!("SRL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize];
-                let rs2 = self.xregs[rs2 as usize];
-                self.xregs[rd as usize] = rs1.wrapping_shr(rs2);
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = (rs1 >> rs2) as u32;
             }
             InstructionDecoded::Srli { rd, rs1, imm } => {
                 log_trace!("SRLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
@@ -667,16 +659,16 @@ impl Cpu {
             }
             InstructionDecoded::Sra { rd, rs1, rs2 } => {
                 log_trace!("SRA: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize];
-                let rs2 = self.xregs[rs2 as usize];
-                self.xregs[rd as usize] = rs1 >> rs2;
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = (rs1 >> rs2) as u32;
             }
             InstructionDecoded::Srai { rd, rs1, imm } => {
                 log_trace!("SRAI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                let rs1 = self.xregs[rs1 as usize];
+                let rs1 = self.xregs[rs1 as usize] as i32;
 
-                self.xregs[rd as usize] = rs1 >> imm;
+                self.xregs[rd as usize] = (rs1 >> imm as i32) as u32;
             }
             InstructionDecoded::Lui { rd, imm } => {
                 log_trace!("LUI: rd: {rd}, imm: {}", imm << 12);
@@ -755,8 +747,8 @@ impl Cpu {
             }
             InstructionDecoded::Bltu { rs1, rs2, imm } => {
                 log_trace!("BLTU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
                 log_trace!("rs1 = {rs1}, rs2 = {rs2}");
                 if rs1 < rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
@@ -767,8 +759,8 @@ impl Cpu {
             }
             InstructionDecoded::Bgeu { rs1, rs2, imm } => {
                 log_trace!("BGEU: rs1: {rs1}, rs2: {rs2}, imm: {}", imm as i32);
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
                 log_trace!("rs1 = {rs1}, rs2 = {rs2}");
                 if rs1 >= rs2 {
                     let (pc, imm) = (self.pc as i32, imm as i32);
@@ -900,6 +892,18 @@ impl Cpu {
                 log_trace!("Writing value: {:#X}", value);
                 self.write(addr, value, Sizes::Word)?;
             }
+            InstructionDecoded::Fld { rd, rs1, imm } => {
+                log_trace!("FLD: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
+                let value = self.read(addr, Sizes::Word)?;
+                self.fregs[rd as usize] = value as f32;
+            }
+            InstructionDecoded::Fsd { rs1, rs2, imm } => {
+                log_trace!("FSD: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
+                let value = self.fregs[rs2 as usize] as u32;
+                self.write(addr, value, Sizes::Word)?;
+            }
             InstructionDecoded::ECall => match self.mode {
                 Mode::User => {
                     log_trace!("ECall => User mode");
@@ -961,7 +965,8 @@ impl Cpu {
                 // - Sets CSRs[mstatus].MIE to CSRs[mstatus].MPIE.
                 // - Sets CSRs[mstatus].MPIE to 1.
                 // - Sets CSRs[mstatus].MPP to 0.
-                self.pc = self.read_csr(MEPC).wrapping_sub(4);
+                // save the old pc value
+                self.pc = self.read_csr(MEPC);
                 log_info!("MRET: pc = {:#X}", self.pc);
                 // MPP is two bits wide at [11..12] of the MSTATUS csr.
                 self.mode = match get_bits(self.read_csr(MSTATUS), 2, 11) {
@@ -997,6 +1002,7 @@ impl Cpu {
             }
             InstructionDecoded::CsrRw { rd, rs1, imm } => {
                 log_trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+
                 let t = self.read_csr(imm as u16);
                 self.write_csr(imm as u16, self.xregs[rs1 as usize]);
                 self.xregs[rd as usize] = t;
@@ -1030,7 +1036,7 @@ impl Cpu {
             InstructionDecoded::CsrRwi { rd, rs1, imm } => {
                 log_trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                let zimm = rs1;
+                let zimm = self.xregs[rs1 as usize];
                 self.xregs[rd as usize] = self.read_csr(imm as u16);
                 self.write_csr(imm as u16, zimm);
 
@@ -1041,7 +1047,7 @@ impl Cpu {
             InstructionDecoded::CsrRsi { rd, rs1, imm } => {
                 log_trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                let zimm = rs1;
+                let zimm = self.xregs[rs1 as usize];
                 let t = self.read_csr(imm as u16);
                 self.write_csr(imm as u16, t | zimm);
                 self.xregs[rd as usize] = t;
@@ -1053,7 +1059,7 @@ impl Cpu {
             InstructionDecoded::CsrRci { rd, rs1, imm } => {
                 log_trace!("CSRRCI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                let zimm = rs1;
+                let zimm = self.xregs[rs1 as usize];
                 let t = self.read_csr(imm as u16);
                 self.write_csr(imm as u16, t & (!zimm));
                 self.xregs[rd as usize] = t;
@@ -1118,39 +1124,139 @@ impl Cpu {
             }
 
             // RV32D
-            InstructionDecoded::Flw { .. } => todo!(),
-            InstructionDecoded::Fsw { .. } => todo!(),
+            InstructionDecoded::Flw { rd, rs1, imm } => {
+                log_trace!("FLW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                log_trace!(
+                    "value of rd = {}, value of rs1 = {}",
+                    self.fregs[rd as usize],
+                    self.xregs[rs1 as usize]
+                );
+                let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
+                let value = self.read(addr, Sizes::Word)?;
+                self.fregs[rd as usize] = f32::from_le_bytes(value.to_le_bytes());
+            }
+            InstructionDecoded::Fsw { rs1, rs2, imm } => {
+                log_trace!("FSW: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
+                let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
+                let value = self.fregs[rs2 as usize].to_le_bytes();
+                self.write(addr, u32::from_le_bytes(value), Sizes::Word)?;
+            }
             InstructionDecoded::FmaddS { .. } => todo!(),
             InstructionDecoded::FmsubS { .. } => todo!(),
             InstructionDecoded::FnmaddS { .. } => todo!(),
             InstructionDecoded::FnmsubS { .. } => todo!(),
-            InstructionDecoded::FaddS { .. } => todo!(),
-            InstructionDecoded::FsubS { .. } => todo!(),
-            InstructionDecoded::FmulS { .. } => todo!(),
-            InstructionDecoded::FdivS { .. } => todo!(),
-            InstructionDecoded::FsqrtS { .. } => todo!(),
-            InstructionDecoded::FsgnjS { .. } => todo!(),
-            InstructionDecoded::FsgnjnS { .. } => todo!(),
-            InstructionDecoded::FsgnjxS { .. } => todo!(),
-            InstructionDecoded::FminS { .. } => todo!(),
-            InstructionDecoded::FmaxS { .. } => todo!(),
-            InstructionDecoded::FcvtSW { .. } => todo!(),
-            InstructionDecoded::FcvtSWU { .. } => todo!(),
-            InstructionDecoded::FcvtWS { .. } => todo!(),
-            InstructionDecoded::FcvtWUS { .. } => todo!(),
+            InstructionDecoded::FaddS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1 + rs2;
+            }
+            InstructionDecoded::FsubS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1 - rs2;
+            }
+            InstructionDecoded::FmulS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1 * rs2;
+            }
+            InstructionDecoded::FdivS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1 / rs2;
+            }
+            InstructionDecoded::FsqrtS { rd, rs1 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                self.fregs[rd as usize] = rs1.sqrt();
+            }
+            InstructionDecoded::FsgnjS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1.abs() * rs2.signum();
+            }
+            InstructionDecoded::FsgnjnS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1.abs() * -rs2.signum();
+            }
+            InstructionDecoded::FsgnjxS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1 * rs2.signum();
+            }
+            InstructionDecoded::FminS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1.min(rs2);
+            }
+            InstructionDecoded::FmaxS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.fregs[rd as usize] = rs1.max(rs2);
+            }
+            InstructionDecoded::FcvtSW { rd, rs1 } => {
+                let rs1 = self.xregs[rs1 as usize];
+                self.fregs[rd as usize] = rs1 as i32 as f32;
+            }
+            InstructionDecoded::FcvtSWU { rd, rs1 } => {
+                let rs1 = self.xregs[rs1 as usize];
+                self.fregs[rd as usize] = rs1 as f32;
+            }
+            InstructionDecoded::FcvtWS { rd, rs1 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                self.xregs[rd as usize] = rs1 as u32;
+            }
+            InstructionDecoded::FcvtWUS { rd, rs1 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                self.xregs[rd as usize] = rs1 as i32 as u32;
+            }
             InstructionDecoded::FmvXW { .. } => todo!(),
-            InstructionDecoded::FmvWX { .. } => todo!(),
-            InstructionDecoded::FeqS { .. } => todo!(),
-            InstructionDecoded::FltS { .. } => todo!(),
-            InstructionDecoded::FleS { .. } => todo!(),
-            InstructionDecoded::AmoswapW { .. } => todo!(),
+            InstructionDecoded::FmvWX { rd, rs1 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                self.xregs[rd as usize] = rs1 as i32 as u32;
+            }
+            InstructionDecoded::FeqS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.xregs[rd as usize] = if rs1 == rs2 { 1 } else { 0 };
+            }
+            InstructionDecoded::FltS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
+            }
+            InstructionDecoded::FleS { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.xregs[rd as usize] = if rs1 <= rs2 { 1 } else { 0 };
+            }
+            InstructionDecoded::AmoswapW { rd, rs1, rs2, .. } => {
+                let addr = self.xregs[rs1 as usize];
+                if addr % 4 != 0 {
+                    return Err(Exception::LoadAddressMisaligned);
+                }
+                let t = self.read(addr, Sizes::Word)?;
+                self.write(addr, self.xregs[rs2 as usize], Sizes::Word)?;
+                self.xregs[rd as usize] = t;
+            }
+            InstructionDecoded::FClassS { rd, rs1 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let class = match rs1.classify() {
+                    std::num::FpCategory::Infinite => 1,
+                    std::num::FpCategory::Nan => 2,
+                    std::num::FpCategory::Normal => 3,
+                    std::num::FpCategory::Subnormal => 4,
+                    std::num::FpCategory::Zero => 5,
+                };
+                self.xregs[rd as usize] = class;
+            }
+
             InstructionDecoded::AmoaddW { .. } => todo!(),
             InstructionDecoded::AmoandW { .. } => todo!(),
             InstructionDecoded::AmoorW { .. } => todo!(),
             InstructionDecoded::AmoxorW { .. } => todo!(),
             InstructionDecoded::AmomaxW { .. } => todo!(),
             InstructionDecoded::AmominW { .. } => todo!(),
-            InstructionDecoded::FClassS { .. } => todo!(),
 
             // RV32M
             InstructionDecoded::Mul { rd, rs1, rs2 } => {
@@ -1163,10 +1269,24 @@ impl Cpu {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 * rs2) as XRegisterSize;
+                self.xregs[rd as usize] = rs1.wrapping_mul(rs2) as XRegisterSize;
             }
-            InstructionDecoded::Mulh { .. } => todo!(),
-            InstructionDecoded::Mulsu { .. } => todo!(),
+            InstructionDecoded::Mulh { rd, rs1, rs2 } => {
+                log_trace!("MULH: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!(
+                    "value of rd = {}, value of rs1 = {}, value of rs2 = {}",
+                    self.xregs[rd as usize],
+                    self.xregs[rs1 as usize],
+                    self.xregs[rs2 as usize]
+                );
+                // multiply the two 32-bit signed integers and return the upper 32 bits of the result
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = ((rs1 as i64 * rs2 as i64) >> 32) as XRegisterSize;
+            }
+            InstructionDecoded::Mulsu { .. } => {
+                todo!()
+            }
             InstructionDecoded::Mulu { rd, rs1, rs2 } => {
                 log_trace!("MULU: rd = {rd}, rs1 = {rs1}, rs2 = {rs2}");
                 log_trace!(
@@ -1177,7 +1297,7 @@ impl Cpu {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1.wrapping_mul(rs2)) as XRegisterSize;
+                self.xregs[rd as usize] = zero_extend(rs1.wrapping_mul(rs2) as XRegisterSize);
             }
             InstructionDecoded::Div { rd, rs1, rs2 } => {
                 log_trace!("DIV: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1189,9 +1309,20 @@ impl Cpu {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 / rs2) as XRegisterSize;
+                self.xregs[rd as usize] = rs1.wrapping_div(rs2) as XRegisterSize;
             }
-            InstructionDecoded::Divu { .. } => todo!(),
+            InstructionDecoded::Divu { rd, rs1, rs2 } => {
+                log_trace!("DIVU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                log_trace!(
+                    "value of rd = {}, value of rs1 = {}, value of rs2 = {}",
+                    self.xregs[rd as usize],
+                    self.xregs[rs1 as usize],
+                    self.xregs[rs2 as usize]
+                );
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = zero_extend(rs1.wrapping_div(rs2) as XRegisterSize);
+            }
             InstructionDecoded::Rem { rd, rs1, rs2 } => {
                 log_trace!("REM: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 log_trace!(
@@ -1202,7 +1333,7 @@ impl Cpu {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 % rs2) as XRegisterSize;
+                self.xregs[rd as usize] = rs1.wrapping_rem(rs2) as XRegisterSize;
             }
             InstructionDecoded::Remu { rd, rs1, rs2 } => {
                 log_trace!("REMU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1214,7 +1345,7 @@ impl Cpu {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 % rs2) as XRegisterSize;
+                self.xregs[rd as usize] = zero_extend(rs1.wrapping_rem(rs2) as XRegisterSize);
             }
 
             // RV32A
@@ -1253,6 +1384,28 @@ impl Cpu {
             InstructionDecoded::CAddi4Spn { .. } => todo!(),
             InstructionDecoded::CNop { .. } => todo!(),
             InstructionDecoded::CSlli { .. } => todo!(),
+            InstructionDecoded::FcvtSD { rd, rs1 } => todo!(),
+            InstructionDecoded::FcvtDS { rd, rs1 } => todo!(),
+            InstructionDecoded::FmvXD { rd, rs1 } => todo!(),
+            InstructionDecoded::FmvDX { rd, rs1 } => todo!(),
+            InstructionDecoded::FaddD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FsubD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FmulD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FdivD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FsqrtD { rd, rs1 } => todo!(),
+            InstructionDecoded::FsgnjD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FsgnjnD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FsgnjxD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FminD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FmaxD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FeqD { rd, rs1, rs2 } => {
+                let rs1 = self.fregs[rs1 as usize];
+                let rs2 = self.fregs[rs2 as usize];
+                self.xregs[rd as usize] = if rs1 == rs2 { 1 } else { 0 };
+            }
+            InstructionDecoded::FltD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FleD { rd, rs1, rs2 } => todo!(),
+            InstructionDecoded::FClassD { rd, rs1 } => todo!(),
         }
 
         Ok(())
@@ -1307,6 +1460,12 @@ impl Cpu {
     }
 
     pub fn step(&mut self) -> Result<(), Exception> {
+        self.devices_increment();
+
+        if let Some(interrupt) = self.check_pending_interrupt() {
+            interrupt.take_trap(self);
+        }
+
         let inst = self.fetch()?;
         // Execute an instruction.
         let trap = match self.execute(inst) {
@@ -1323,12 +1482,6 @@ impl Cpu {
 
     pub fn run(&mut self) -> Result<(), Exception> {
         loop {
-            self.devices_increment();
-
-            if let Some(interrupt) = self.check_pending_interrupt() {
-                interrupt.take_trap(self);
-            }
-
             self.step()?;
         }
     }

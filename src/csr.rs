@@ -3,10 +3,12 @@
 use std::fmt;
 use std::ops::{Bound, Range, RangeBounds, RangeInclusive};
 
-pub type CsrAddress = u16;
-pub type CsrFieldRange = RangeInclusive<usize>;
+use bit_ops::BitOps;
 
-pub const MXLEN: usize = 32;
+pub type CsrAddress = u16;
+pub type CsrFieldRange = RangeInclusive<u32>;
+
+const MXLEN: u32 = 32;
 /// The number of CSRs. The field is 12 bits so the maximum kind of CSRs is 4096 (2**12).
 pub const CSR_SIZE: usize = 4096;
 
@@ -249,8 +251,10 @@ impl State {
         misa.supervisor(true);
         misa.m_ext(true);
         misa.a_ext(true);
-        misa.f_ext(true);
+        // misa.f_ext(true);
         misa.i_ext(true);
+        // misa.c_ext(true);
+        // misa.d_ext(true);
 
         csrs[MISA as usize] = misa.inner();
 
@@ -308,12 +312,8 @@ impl State {
     }
 
     /// Read a bit from the CSR.
-    pub fn read_bit(&self, addr: CsrAddress, bit: usize) -> u32 {
-        if bit >= MXLEN {
-            // TODO: raise exception?
-        }
-
-        if (self.read(addr) & (1 << bit)) != 0 {
+    pub fn read_bit(&self, addr: CsrAddress, bit: u32) -> u32 {
+        if self.read(addr).get_bit(bit) != 0 {
             1
         } else {
             0
@@ -321,53 +321,28 @@ impl State {
     }
 
     /// Read a arbitrary length of bits from the CSR.
-    pub fn read_bits<T: RangeBounds<usize>>(&self, addr: CsrAddress, range: T) -> u32 {
-        let range = to_range(&range, MXLEN);
-
-        if (range.start >= MXLEN) | (range.end > MXLEN) | (range.start >= range.end) {
-            // TODO: ranse exception?
-        }
-
-        // Bitmask for high bits.
-        let mut bitmask = 0;
-        if range.end != MXLEN {
-            bitmask = !0 << range.end;
-        }
-
-        // Shift away low bits.
-        (self.read(addr) & !bitmask) >> range.start
+    pub fn read_bits<T: RangeBounds<u32>>(&self, addr: CsrAddress, range: T) -> u32 {
+        let r = to_range(&range, MXLEN);
+        self.read(addr).get_bits(r.end - r.start, r.start)
     }
 
     /// Write a bit to the CSR.
-    pub fn write_bit(&mut self, addr: CsrAddress, bit: usize, val: u32) {
-        if bit >= MXLEN {
-            // TODO: raise exception?
+    pub fn write_bit(&mut self, addr: CsrAddress, bit: u32, val: u32) {
+        let mut csr_val = self.read(addr);
+        if val == 0 {
+            csr_val = csr_val.clear_bit(bit);
+        } else {
+            csr_val = csr_val.set_bit(bit);
         }
-        if val > 1 {
-            // TODO: raise exception
-        }
-
-        if val == 1 {
-            self.write(addr, self.read(addr) | 1 << bit);
-        } else if val == 0 {
-            self.write(addr, self.read(addr) & !(1 << bit));
-        }
+        self.write(addr, csr_val);
     }
 
     /// Write an arbitrary length of bits to the CSR.
-    pub fn write_bits<T: RangeBounds<usize>>(&mut self, addr: CsrAddress, range: T, val: u32) {
+    pub fn write_bits<T: RangeBounds<u32>>(&mut self, addr: CsrAddress, range: T, val: u32) {
         let range = to_range(&range, MXLEN);
-
-        if (range.start >= MXLEN) | (range.end > MXLEN) | (range.start >= range.end) {
-            // TODO: ranse exception?
-        }
-        if (val >> (range.end - range.start)) != 0 {
-            // TODO: raise exception
-        }
-
-        let bitmask = (!0 << range.end) | !(!0 << range.start);
-        // Set bits.
-        self.write(addr, (self.read(addr) & bitmask) | (val << range.start))
+        let mut csr_val = self.read(addr);
+        csr_val = csr_val.set_bits(val, range.end - range.start, range.start);
+        self.write(addr, csr_val);
     }
 
     /// Read bit(s) from a given field in the SSTATUS register.
@@ -397,7 +372,7 @@ impl State {
 }
 
 /// Convert the val implement `RangeBounds` to the `Range` struct.
-fn to_range<T: RangeBounds<usize>>(generic_range: &T, bit_length: usize) -> Range<usize> {
+fn to_range<T: RangeBounds<u32>>(generic_range: &T, bit_length: u32) -> Range<u32> {
     let start = match generic_range.start_bound() {
         Bound::Excluded(&val) => val + 1,
         Bound::Included(&val) => val,
