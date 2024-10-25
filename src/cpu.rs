@@ -683,8 +683,6 @@ impl Cpu {
                 self.xregs[rd as usize] = self.pc;
 
                 let npc = self.pc.wrapping_add(imm).wrapping_sub(4);
-                // npc = crate::bit_ops::zero_extend(npc);
-
                 self.pc = npc;
             }
             InstructionDecoded::Jalr { rd, rs1, imm } => {

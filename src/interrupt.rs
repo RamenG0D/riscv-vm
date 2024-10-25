@@ -1,7 +1,7 @@
 //! The interrupt module contains all the interrupt kinds and the function to handle interrupts.
 
 use crate::{
-    bit_ops::*, cpu::{Cpu, Mode}, csr::*, log_debug, log_info, memory::dram::Sizes
+    bit_ops::*, cpu::{Cpu, Mode}, csr::*, log_debug, log_info
 };
 
 /// All the interrupt kinds.
