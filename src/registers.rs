@@ -3,7 +3,7 @@ use std::ops::{Index, IndexMut};
 pub const REGISTERS_COUNT: usize = 32;
 
 pub type XRegisterSize = u32;
-pub type FRegisterSize = f32;
+pub type FRegisterSize = f64;
 
 pub struct XRegisters {
     regs: [XRegisterSize; REGISTERS_COUNT],

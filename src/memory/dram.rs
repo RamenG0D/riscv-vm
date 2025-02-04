@@ -2,7 +2,7 @@ use crate::{bus::{Device, VirtualDevice}, trap::Exception};
 
 use super::virtual_memory::{HeapMemory, MemorySize};
 
-pub const DRAM_SIZE: MemorySize = 1024 * 1024 * 128; // 1GB
+pub const DRAM_SIZE: MemorySize = 128 * 1024 * 1024; // 1 GiB
 pub const DRAM_BASE: MemorySize = 0x8000_0000;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -19,14 +19,20 @@ pub struct Dram {
 
 impl Dram {
     pub fn new() -> Self {
-        Self {
-            memory: HeapMemory::new(),
-        }
+        Self { memory: HeapMemory::new() }
     }
 
     pub fn new_device() -> VirtualDevice {
         VirtualDevice::new(Box::new(Self::new()), DRAM_BASE, DRAM_SIZE)
     }
+
+	pub fn initialize(&mut self, data: &[u8]) {
+		let mem = self.memory.memory_mut();
+		if data.len() > mem.len() {
+			panic!("Error: data is too large for DRAM");
+		}
+		mem[..data.len()].copy_from_slice(data);
+	}
 
     pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         match size {

@@ -1,6 +1,7 @@
 //! The rom module contains the read-only memory structure and implementation to read the memory. ROM includes a device tree blob (DTB) compiled from a device tree source (DTS).
+use log::info;
+
 use crate::bus::{Device, VirtualDevice};
-use crate::log_info;
 use crate::memory::dram::Sizes;
 use crate::memory::virtual_memory::MemorySize;
 use crate::trap::Exception;
@@ -12,93 +13,94 @@ pub const MROM_SIZE: u32 = 0xf000;
 /// The address which the mask ROM ends.
 // const MROM_END: u32 = MROM_BASE + 0xf000;
 
-const DTS: &str = r#"/dts-v1/;
+const DTS: &str = r#"
+/dts-v1/;
 
 / {
-    #address-cells = <0x02>;
-    #size-cells = <0x02>;
-    compatible = "riscv-virtio";
-    model = "riscv-virtio,qemu";
+	#address-cells = <0x2>;
+	#size-cells = <0x2>;
+	compatible = "riscv-virtio";
+	model = "riscv-virtio,qemu";
 
-    chosen {
-        bootargs = "root=/dev/vda ro console=ttyS0";
-        stdout-path = "/uart@10000000";
-    };
+	chosen {
+		bootargs = "root=/dev/vda rw ttyS0";
+		stdout-path = "/uart@10000000";
+	};
 
-    uart@10000000 {
-        interrupts = <0xa>;
-        interrupt-parent = <0x03>;
-        clock-frequency = <0x384000>;
-        reg = <0x0 0x10000000 0x0 0x100>;
-        compatible = "ns16550a";
-    };
+	uart@10000000 {
+		interrupts = <0xa>;
+		interrupt-parent = <0x3>;
+		clock-frequency = <0x384000>;
+		reg = <0x0 0x10000000 0x0 0x100>;
+		compatible = "ns16550a";
+	};
 
-    virtio_mmio@10001000 {
-        interrupts = <0x01>;
-        interrupt-parent = <0x03>;
-        reg = <0x0 0x10001000 0x0 0x1000>;
-        compatible = "virtio,mmio";
-    };
+	virtio_mmio@10001000 {
+		interrupts = <0x1>;
+		interrupt-parent = <0x3>;
+		reg = <0x0 0x10001000 0x0 0x1000>;
+		compatible = "virtio,mmio";
+	};
 
-    cpus {
-        #address-cells = <0x01>;
-        #size-cells = <0x00>;
-        timebase-frequency = <0x989680>;
+	cpus {
+		#address-cells = <0x1>;
+		#size-cells = <0x0>;
+		timebase-frequency = <0x989680>;
 
-        cpu-map {
-            cluster0 {
-                core0 {
-                    cpu = <0x01>;
-                };
-            };
-        };
+		cpu-map {
+			cluster0 {
+				core0 {
+					cpu = <0x1>;
+				};
+			};
+		};
 
-        cpu@0 {
-            phandle = <0x01>;
-            device_type = "cpu";
-            reg = <0x00>;
-            status = "okay";
-            compatible = "riscv";
-            riscv,isa = "rv32imac";
-            mmu-type = "riscv,sv48";
+		cpu@0 {
+			phandle = <0x1>;
+			device_type = "cpu";
+			reg = <0x0>;
+			status = "okay";
+			compatible = "riscv";
+			riscv,isa = "rv64imafdcsu";
+			mmu-type = "riscv,sv39";
 
-            interrupt-controller {
-                #interrupt-cells = <0x01>;
-                interrupt-controller;
-                compatible = "riscv,cpu-intc";
-                phandle = <0x02>;
-            };
-        };
-    };
+			interrupt-controller {
+				#interrupt-cells = <0x1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+				phandle = <0x2>;
+			};
+		};
+	};
 
 	memory@80000000 {
 		device_type = "memory";
 		reg = <0x0 0x80000000 0x0 0x8000000>;
 	};
 
-    soc {
-        #address-cells = <0x02>;
-        #size-cells = <0x02>;
-        compatible = "simple-bus";
-        ranges;
+	soc {
+		#address-cells = <0x2>;
+		#size-cells = <0x2>;
+		compatible = "simple-bus";
+		ranges;
 
-        interrupt-controller@c000000 {
-            phandle = <0x03>;
-            riscv,ndev = <0x35>;
-            reg = <0x00 0xc000000 0x00 0x4000000>;
-            interrupts-extended = <0x02 0x0b 0x02 0x09>;
-            interrupt-controller;
-            compatible = "riscv,plic0";
-            #interrupt-cells = <0x01>;
-            #address-cells = <0x00>;
-        };
+		interrupt-controller@c000000 {
+			phandle = <0x3>;
+			riscv,ndev = <0x35>;
+			reg = <0x0 0xc000000 0x0 0x4000000>;
+			interrupts-extended = <0x2 0xb 0x2 0x9>;
+			interrupt-controller;
+			compatible = "riscv,plic0";
+			#interrupt-cells = <0x1>;
+			#address-cells = <0x0>;
+		};
 
-        clint@2000000 {
-            interrupts-extended = <0x02 0x03 0x02 0x07>;
-            reg = <0x00 0x2000000 0x00 0x10000>;
-            compatible = "riscv,clint0";
-        };
-    };
+		clint@2000000 {
+			interrupts-extended = <0x2 0x3 0x2 0x7>;
+			reg = <0x0 0x2000000 0x0 0x10000>;
+			compatible = "riscv,clint0";
+		};
+	};
 };"#;
 
 /// Read a dtb file. First, create a dts file. Second, compile it to a dtb file. Finally, read the dtb file and return the binary content.
@@ -139,14 +141,14 @@ impl Rom {
     /// Create a new `rom` object.
     pub fn new() -> Self {
         let mut dtb = dtb();
-        log_info!("The size of the device tree blob (DTB): {}", dtb.len());
+        info!("The size of the device tree blob (DTB): {}", dtb.len());
 
         // TODO: set a reset vector correctly.
         // 0x20 is the size of a reset vector.
         let mut rom = vec![0; 32];
         rom.append(&mut dtb);
 
-        log_info!("The size of the ROM: {}", rom.len());
+        info!("The size of the ROM: {}", rom.len());
 
         let align = 0x1000;
         rom.resize((rom.len() + align - 1) / align * align, 0);
@@ -159,7 +161,7 @@ impl Rom {
     }
 
     pub fn new_with_data(data: Vec<u8>) -> Rom {
-        log_info!("Initializing the ROM with the data of size: {}", data.len());
+        info!("Initializing the ROM with the data of size: {}", data.len());
         Rom { data }
     }
 

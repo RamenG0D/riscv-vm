@@ -1,121 +1,40 @@
 pub mod bus;
 pub mod cpu;
 pub mod csr;
-pub mod devices;
 pub mod interrupt;
 pub mod memory;
 pub mod registers;
 pub mod rom;
 pub mod trap;
 
-#[cfg(feature = "logging")]
-pub mod logging {
-    pub use colored;
-    pub use fern;
-    pub use log;
-    use log::LevelFilter;
+pub use log;
 
-    #[macro_export]
-    macro_rules! log_trace {
-        ($($arg:tt)+) => {
-            log::trace!($($arg)+)
-        };
-    }
+use log::LevelFilter;
+pub fn init_logging(level: LevelFilter) {
+    use colored::{Color, Colorize};
+    use fern::{colors::ColoredLevelConfig, Dispatch};
 
-    #[macro_export]
-    macro_rules! log_debug {
-        ($($arg:tt)+) => {
-            log::debug!($($arg)+)
-        };
-    }
-
-    #[macro_export]
-    macro_rules! log_info {
-        ($($arg:tt)+) => {
-            log::info!($($arg)+)
-        };
-    }
-
-    #[macro_export]
-    macro_rules! log_warn {
-        ($($arg:tt)*) => {
-            log::warn!($($arg)*)
-        };
-    }
-
-    #[macro_export]
-    macro_rules! log_error {
-        ($($arg:tt)*) => {
-            log::error!($($arg)*)
-        };
-    }
-
-    pub fn init_logging(level: LevelFilter) {
-        use crate::logging::colored::{Color, Colorize};
-        use crate::logging::fern::{colors::ColoredLevelConfig, Dispatch};
-
-        let colors = ColoredLevelConfig::new()
-            .info(fern::colors::Color::Green)
-            .debug(fern::colors::Color::Cyan)
-            .error(fern::colors::Color::Red);
-        Dispatch::new()
-            .format(move |out, message, record| {
-                out.finish(format_args!(
-                    "[{level}][{target}][{time}] {message}",
-                    time = chrono::Local::now()
-                        .format("%H:%M:%S")
-                        .to_string()
-                        .color(Color::BrightBlue),
-                    target = record.target().color(Color::Magenta),
-                    level = colors.color(record.level()),
-                    message = message,
-                ))
-            })
-            .level(level)
-            .chain(std::io::stdout())
-            .apply()
-            .unwrap();
-    }
-}
-#[cfg(not(feature = "logging"))]
-pub mod logging {
-    pub mod log {
-        pub enum LevelFilter {
-            Debug,
-            Trace,
-            Error,
-            Warn,
-            Info,
-            None,
-        }
-    }
-
-    #[macro_export]
-    macro_rules! log_trace {
-        ($($arg:tt)+) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_debug {
-        ($($arg:tt)+) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_info {
-        ($($arg:tt)+) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_warn {
-        ($($arg:tt)*) => {};
-    }
-
-    #[macro_export]
-    macro_rules! log_error {
-        ($($arg:tt)*) => {};
-    }
-
-    pub fn init_logging(_level: log::LevelFilter) {}
+    let colors = ColoredLevelConfig::new()
+        .info(fern::colors::Color::Green)
+        .debug(fern::colors::Color::Cyan)
+        .error(fern::colors::Color::Red);
+    Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "[{level}][{target}][{time}] {message}",
+                time = chrono::Local::now()
+                    .format("%H:%M:%S")
+                    .to_string()
+                    .color(Color::BrightBlue),
+                target = record.target().color(Color::Magenta),
+                level = colors.color(record.level()),
+                message = message,
+            ))
+        })
+        .level(level)
+        .chain(std::io::stdout())
+        .apply()
+        .unwrap();
 }
 
 #[inline]
@@ -143,11 +62,12 @@ pub fn disassemble(program: &[u32], file: &str) {
         // debug_assert!(pc % 4 != 0, "Pc must be aligned to 4 bytes {{ PC: {pc:#X} }}");
         match program.get(pc) {
             Some(&inst) => {
-                let dinst = try_decode(inst); /*if is_compressed(inst) {
-                                                  pc += 2; try_decode_compressed(inst)
-                                              } else {
-                                                  pc += 4; try_decode(inst)
-                                              };*/
+                let dinst = try_decode(inst);
+                /*if is_compressed(inst) {
+                    pc += 2; try_decode_compressed(inst)
+                } else {
+                    pc += 4; try_decode(inst)
+                };*/
                 pc += 4;
                 writeln!(
                     file,

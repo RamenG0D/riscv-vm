@@ -1,9 +1,6 @@
-use crate::{
-    devices::{clint::Clint, plic::Plic, uart::Uart, viritio::Virtio}, log_error, memory::{
-        dram::{Dram, Sizes},
-        virtual_memory::MemorySize,
-    }, rom::Rom, trap::Exception
-};
+use log::error;
+
+use crate::{memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception};
 
 pub trait Device {
     fn as_any(&self) -> &dyn std::any::Any;
@@ -11,6 +8,8 @@ pub trait Device {
 
     fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception>;
     fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception>;
+
+	fn increment(&mut self) {}
 }
 
 pub struct VirtualDevice {
@@ -48,6 +47,10 @@ impl VirtualDevice {
     ) -> Result<(), Exception> {
         self.inner_device.store(addr, size, value)
     }
+
+	pub fn increment(&mut self) {
+		self.inner_device.increment();
+	}
 }
 
 pub struct Bus {
@@ -56,17 +59,7 @@ pub struct Bus {
 
 impl Bus {
     pub fn new() -> Self {
-
-        Self {
-            devices: vec![
-                Dram::new_device(),
-                Rom::new_device(),
-                Uart::new_device(),
-                Plic::new_device(),
-                Clint::new_device(),
-                Virtio::new_device(),
-            ],
-        }
+        Self { devices: Vec::new() }
     }
 
     pub fn get_device<T>(&self) -> Option<&T>
@@ -93,6 +86,14 @@ impl Bus {
         None
     }
 
+	pub fn get_devices_mut(&mut self) -> &mut Vec<VirtualDevice> {
+		&mut self.devices
+	}
+
+	pub fn get_devices(&self) -> &Vec<VirtualDevice> {
+		&self.devices
+	}
+
     pub fn add_device(&mut self, device: VirtualDevice) {
         self.devices.push(device);
     }
@@ -100,11 +101,10 @@ impl Bus {
     pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
         for device in &self.devices {
             if device.base() <= address && address < device.base() + device.size() {
-                let address = address - device.base(); // local address
-                return device.load(address, size);
+                return device.load(address - device.base(), size);
             }
         }
-        log_error!("Bus Read LoadAccessFault: {:#X}", address);
+        error!("Bus Read LoadAccessFault: {:#X}", address);
         Err(Exception::LoadAccessFault)
     }
 
@@ -116,17 +116,10 @@ impl Bus {
     ) -> Result<(), Exception> {
         for device in &mut self.devices {
             if device.base() <= address && address < device.base() + device.size() {
-                let address = address - device.base();
-                return device.store(address, size, value);
+                return device.store(address - device.base(), size, value);
             }
         }
-        log_error!("Bus Write StoreAMOAccessFault: {:#X}", address);
+        error!("Bus Write StoreAMOAccessFault: {:#X}", address);
         Err(Exception::StoreAccessFault)
-    }
-}
-
-impl Default for Bus {
-    fn default() -> Self {
-        Self::new()
     }
 }

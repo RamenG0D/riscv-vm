@@ -1,15 +1,75 @@
 //! The csr module contains all the control and status registers.
 
-use std::fmt;
 use std::ops::{Bound, Range, RangeBounds, RangeInclusive};
 
 use bit_ops::BitOps;
+use log::{info, trace};
 
 pub type CsrAddress = u16;
 pub type CsrFieldRange = RangeInclusive<u32>;
 
+pub trait Csr {
+	/// Read the val from the CSR.
+    fn read(&self, addr: CsrAddress) -> u32;
+    /// Write the val to the CSR.
+    fn write(&mut self, addr: CsrAddress, val: u32);
+
+    /// Read a bit from the CSR.
+    fn read_bit(&self, addr: CsrAddress, bit: u32) -> u32 {
+        if self.read(addr).get_bit(bit) != 0 { 1 } else { 0 }
+    }
+
+    /// Read a arbitrary length of bits from the CSR.
+    fn read_bits<T: RangeBounds<u32>>(&self, addr: CsrAddress, range: T) -> u32 {
+        let r = to_range(&range, MXLEN);
+        self.read(addr).get_bits(r.end - r.start, r.start)
+    }
+
+    /// Write a bit to the CSR.
+    fn write_bit(&mut self, addr: CsrAddress, bit: u32, val: u32) {
+        let mut csr_val = self.read(addr);
+        if val == 0 {
+            csr_val = csr_val.clear_bit(bit);
+        } else {
+            csr_val = csr_val.set_bit(bit);
+        }
+        self.write(addr, csr_val);
+    }
+
+    /// Write an arbitrary length of bits to the CSR.
+    fn write_bits<T: RangeBounds<u32>>(&mut self, addr: CsrAddress, range: T, val: u32) {
+        let range = to_range(&range, MXLEN);
+        let mut csr_val = self.read(addr);
+        csr_val = csr_val.set_bits(val, range.end - range.start, range.start);
+        self.write(addr, csr_val);
+    }
+
+    /// Read bit(s) from a given field in the SSTATUS register.
+    fn read_sstatus(&self, range: CsrFieldRange) -> u32 {
+        self.read_bits(SSTATUS, range)
+    }
+
+    /// Read bit(s) from a given field in the MSTATUS register.
+    fn read_mstatus(&self, range: CsrFieldRange) -> u32 {
+        self.read_bits(MSTATUS, range)
+    }
+
+    /// Write bit(s) to a given field in the SSTATUS register.
+    fn write_sstatus(&mut self, range: CsrFieldRange, val: u32) {
+        self.write_bits(SSTATUS, range, val);
+    }
+
+    /// Write bit(s) to a given field in the MSTATUS register.
+    fn write_mstatus(&mut self, range: CsrFieldRange, val: u32) {
+        self.write_bits(MSTATUS, range, val);
+    }
+
+    /// Reset all the CSRs.
+    fn reset(&mut self);
+}
+
 const MXLEN: u32 = 32;
-/// The number of CSRs. The field is 12 bits so the maximum kind of CSRs is 4096 (2**12).
+/// The number of CSRs. The field is 12 bits so the maximum kind of CSRs is 4096 (2^12).
 pub const CSR_SIZE: usize = 4096;
 
 //////////////////////////////
@@ -39,7 +99,7 @@ pub const FCSR: CsrAddress = 0x003;
 
 // User Counter/Timers.
 /// Timer for RDTIME instruction.
-const TIME: CsrAddress = 0xc01;
+pub const TIME: CsrAddress = 0xc01;
 
 /////////////////////////////////////
 // Supervisor-level CSR addresses //
@@ -172,43 +232,11 @@ pub const SEIP_BIT: u32 = 1 << 9;
 pub const MEIP_BIT: u32 = 1 << 11;
 
 /// The state to contains all the CSRs.
-pub struct State {
+pub struct CpuCsr {
     csrs: [u32; CSR_SIZE],
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            r#"
-mstatus={:>#18x}   mtvec={:>#18x}    mepc={:>#18x}
-mcause={:>#18x} medeleg={:>#18x} mideleg={:>#18x}
-sstatus={:>#18x}   stvec={:>#18x}    sepc={:>#18x}
-scause={:>#18x} sedeleg={:>#18x} sideleg={:>#18x}
-ustatus={:>#18x}   utvec={:>#18x}    uepc={:>#18x}
-ucause={:>#18x}
-"#,
-            self.read(MSTATUS),
-            self.read(MTVEC),
-            self.read(MEPC),
-            self.read(MCAUSE),
-            self.read(MEDELEG),
-            self.read(MIDELEG),
-            self.read(SSTATUS),
-            self.read(STVEC),
-            self.read(SEPC),
-            self.read(SCAUSE),
-            self.read(SEDELEG),
-            self.read(SIDELEG),
-            self.read(USTATUS),
-            self.read(UTVEC),
-            self.read(UEPC),
-            self.read(UCAUSE),
-        )
-    }
-}
-
-impl State {
+impl CpuCsr {
     /// Create a new `state` object.
     pub fn new() -> Self {
         let mut csrs = [0; CSR_SIZE];
@@ -261,13 +289,34 @@ impl State {
         Self { csrs }
     }
 
+	pub fn dump(&self) {
+		const CSR_NAMES: [&str; 16] = [
+            "mstatus", "mtvec", "mepc", "mcause", "medeleg", "mideleg", "sstatus", "stvec", "sepc",
+            "scause", "sedeleg", "sideleg", "ustatus", "utvec", "uepc", "ucause",
+        ];
+        const CSR_INDEXS: [CsrAddress; 16] = [
+            MSTATUS, MTVEC, MEPC, MCAUSE, MEDELEG, MIDELEG, SSTATUS, STVEC, SEPC, SCAUSE, SEDELEG,
+            SIDELEG, USTATUS, UTVEC, UEPC, UCAUSE,
+        ];
+
+		info!("{:-^80}", "csr");
+
+		for (name, &index) in CSR_NAMES.iter().zip(CSR_INDEXS.iter()) {
+			info!("{:8} = {:#010x}", name, self.read(index));
+		}
+
+		info!("{:-^80}", "");
+	}
+
     /// Increment the value in the TIME register.
     pub fn increment_time(&mut self) {
         self.csrs[TIME as usize] = self.csrs[TIME as usize].wrapping_add(1);
     }
+}
 
-    /// Read the val from the CSR.
-    pub fn read(&self, addr: CsrAddress) -> u32 {
+impl Csr for CpuCsr {
+	/// Read the val from the CSR.
+    fn read(&self, addr: CsrAddress) -> u32 {
         // 4.1 Supervisor CSRs
         // "The supervisor should only view CSR state that should be visible to a supervisor-level
         // operating system. In particular, there is no information about the existence (or
@@ -275,6 +324,7 @@ impl State {
         // accessible by the supervisor.  Many supervisor CSRs are a subset of the equivalent
         // machine-mode CSR, and the machinemode chapter should be read first to help understand
         // the supervisor-level CSR descriptions."
+        trace!("Reading CSR: {:#x}", addr);
         match addr {
             SSTATUS => self.csrs[MSTATUS as usize] & SSTATUS_MASK,
             SIE => self.csrs[MIE as usize] & self.csrs[MIDELEG as usize],
@@ -284,7 +334,7 @@ impl State {
     }
 
     /// Write the val to the CSR.
-    pub fn write(&mut self, addr: CsrAddress, val: u32) {
+    fn write(&mut self, addr: CsrAddress, val: u32) {
         // 4.1 Supervisor CSRs
         // "The supervisor should only view CSR state that should be visible to a supervisor-level
         // operating system. In particular, there is no information about the existence (or
@@ -292,16 +342,19 @@ impl State {
         // accessible by the supervisor.  Many supervisor CSRs are a subset of the equivalent
         // machine-mode CSR, and the machinemode chapter should be read first to help understand
         // the supervisor-level CSR descriptions."
+        trace!("Writing CSR: {:#x} with value: {:#x}", addr, val);
         match addr {
             MVENDORID => (),
             MARCHID => (),
             MIMPID => (),
             MHARTID => (),
             SSTATUS => {
-                self.csrs[MSTATUS as usize] = (self.csrs[MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
+                self.csrs[MSTATUS as usize] =
+                    (self.csrs[MSTATUS as usize] & !SSTATUS_MASK) | (val & SSTATUS_MASK);
             }
             SIE => {
-                self.csrs[MIE as usize] = (self.csrs[MIE as usize] & !self.csrs[MIDELEG as usize]) | (val & self.csrs[MIDELEG as usize]);
+                self.csrs[MIE as usize] = (self.csrs[MIE as usize] & !self.csrs[MIDELEG as usize])
+                    | (val & self.csrs[MIDELEG as usize]);
             }
             SIP => {
                 let mask = SSIP_BIT & self.csrs[MIDELEG as usize];
@@ -311,64 +364,9 @@ impl State {
         }
     }
 
-    /// Read a bit from the CSR.
-    pub fn read_bit(&self, addr: CsrAddress, bit: u32) -> u32 {
-        if self.read(addr).get_bit(bit) != 0 {
-            1
-        } else {
-            0
-        }
-    }
-
-    /// Read a arbitrary length of bits from the CSR.
-    pub fn read_bits<T: RangeBounds<u32>>(&self, addr: CsrAddress, range: T) -> u32 {
-        let r = to_range(&range, MXLEN);
-        self.read(addr).get_bits(r.end - r.start, r.start)
-    }
-
-    /// Write a bit to the CSR.
-    pub fn write_bit(&mut self, addr: CsrAddress, bit: u32, val: u32) {
-        let mut csr_val = self.read(addr);
-        if val == 0 {
-            csr_val = csr_val.clear_bit(bit);
-        } else {
-            csr_val = csr_val.set_bit(bit);
-        }
-        self.write(addr, csr_val);
-    }
-
-    /// Write an arbitrary length of bits to the CSR.
-    pub fn write_bits<T: RangeBounds<u32>>(&mut self, addr: CsrAddress, range: T, val: u32) {
-        let range = to_range(&range, MXLEN);
-        let mut csr_val = self.read(addr);
-        csr_val = csr_val.set_bits(val, range.end - range.start, range.start);
-        self.write(addr, csr_val);
-    }
-
-    /// Read bit(s) from a given field in the SSTATUS register.
-    pub fn read_sstatus(&self, range: CsrFieldRange) -> u32 {
-        self.read_bits(SSTATUS, range)
-    }
-
-    /// Read bit(s) from a given field in the MSTATUS register.
-    pub fn read_mstatus(&self, range: CsrFieldRange) -> u32 {
-        self.read_bits(MSTATUS, range)
-    }
-
-    /// Write bit(s) to a given field in the SSTATUS register.
-    pub fn write_sstatus(&mut self, range: CsrFieldRange, val: u32) {
-        self.write_bits(SSTATUS, range, val);
-    }
-
-    /// Write bit(s) to a given field in the MSTATUS register.
-    pub fn write_mstatus(&mut self, range: CsrFieldRange, val: u32) {
-        self.write_bits(MSTATUS, range, val);
-    }
-
-    /// Reset all the CSRs.
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
+	fn reset(&mut self) {
+		*self = Self::new();
+	}
 }
 
 /// Convert the val implement `RangeBounds` to the `Range` struct.
@@ -385,10 +383,4 @@ fn to_range<T: RangeBounds<u32>>(generic_range: &T, bit_length: u32) -> Range<u3
     };
 
     start..end
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self::new()
-    }
 }

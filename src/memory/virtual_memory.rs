@@ -95,6 +95,38 @@ impl<const L: usize> HeapMemory<L> {
         }
     }
 
+	pub fn with_data(data: &[u8]) -> Result<Self, String> {
+		// check if data is larger than memory size
+		let memory = if data.len() < L {
+			let mut tmp = data.to_vec();
+			tmp.resize(L, 0);
+			tmp.into_boxed_slice()
+		} else if data.len() == L {
+			data.to_vec().into_boxed_slice()
+		} else {
+			return Err("Data is larger than memory size".to_string());
+		};
+		Ok(Self { memory })
+	}
+
+	pub fn resize<const NL: usize>(self) -> HeapMemory<NL> {
+		let memory = if self.memory.len() < NL {
+			let mut tmp = Vec::from(self.memory);
+			tmp.resize(NL, 0);
+			tmp.into_boxed_slice()
+		} else {
+			self.memory
+		};
+		HeapMemory { memory }
+	}
+
+	pub fn memory(&self) -> &Box<[u8]> {
+		&self.memory
+	}
+	pub fn memory_mut(&mut self) -> &mut Box<[u8]> {
+		&mut self.memory
+	}
+
     pub fn read32(&self, index: MemorySize) -> Result<MemorySize, Exception> {
         if index + 3 > L as MemorySize {
             return Err(Exception::LoadAccessFault);
