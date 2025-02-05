@@ -1,6 +1,5 @@
-use log::error;
-
 use crate::{memory::{dram::Sizes, virtual_memory::MemorySize}, trap::Exception};
+use log::error;
 
 pub trait Device {
     fn as_any(&self) -> &dyn std::any::Any;

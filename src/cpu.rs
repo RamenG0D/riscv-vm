@@ -1134,7 +1134,6 @@ impl Executor {
             // RV32F
             InstructionDecoded::Flw { .. } => todo!(),
             InstructionDecoded::Fsw { .. } => todo!(),
-			InstructionDecoded::FmaddD { .. } => todo!(),
             InstructionDecoded::FmaddS { .. } => todo!(),
             InstructionDecoded::FmsubS { .. } => todo!(),
             InstructionDecoded::FnmaddS { .. } => todo!(),
@@ -1278,7 +1277,6 @@ impl Executor {
             InstructionDecoded::FcvtDS { .. } => todo!(),
             InstructionDecoded::FaddD { .. } => todo!(),
             InstructionDecoded::FsubD { .. } => todo!(),
-			InstructionDecoded::FmsubD { .. } => todo!(),
             InstructionDecoded::FmulD { .. } => todo!(),
             InstructionDecoded::FdivD { .. } => todo!(),
             InstructionDecoded::FsqrtD { .. } => todo!(),
@@ -1291,12 +1289,10 @@ impl Executor {
             InstructionDecoded::FltD { .. } => todo!(),
             InstructionDecoded::FleD { .. } => todo!(),
             InstructionDecoded::FClassD { .. } => todo!(),
-			InstructionDecoded::FcvtWD { .. } => todo!(),
-			InstructionDecoded::FcvtDW { .. } => todo!(),
-			InstructionDecoded::FcvtWUD { .. } => todo!(),
-			InstructionDecoded::FcvtDWU { .. } => todo!(),
-			InstructionDecoded::FnmaddD { .. } => todo!(),
-			InstructionDecoded::FnmsubD { .. } => todo!(),
+
+			// TODO: figure out where these go
+			InstructionDecoded::FmvXD { .. } => todo!(),
+			InstructionDecoded::FmvDX { .. } => todo!(),
         }
 
         Ok(())

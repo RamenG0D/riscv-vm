@@ -9,8 +9,7 @@ pub mod trap;
 
 pub use log;
 
-use log::LevelFilter;
-pub fn init_logging(level: LevelFilter) {
+pub fn init_logging(level: log::LevelFilter) {
     use colored::{Color, Colorize};
     use fern::{colors::ColoredLevelConfig, Dispatch};
 
