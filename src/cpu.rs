@@ -1291,8 +1291,14 @@ impl Executor {
             InstructionDecoded::FClassD { .. } => todo!(),
 
 			// TODO: figure out where these go
-			InstructionDecoded::FmvXD { .. } => todo!(),
-			InstructionDecoded::FmvDX { .. } => todo!(),
+			InstructionDecoded::FcvtWD { .. } => todo!(),
+			InstructionDecoded::FcvtWUD { .. } => todo!(),
+			InstructionDecoded::FcvtDW { .. } => todo!(),
+			InstructionDecoded::FcvtDWU { .. } => todo!(),
+			InstructionDecoded::FmaddD { .. } => todo!(),
+			InstructionDecoded::FmsubD { .. } => todo!(),
+			InstructionDecoded::FnmaddD { .. } => todo!(),
+			InstructionDecoded::FnmsubD { .. } => todo!(),
         }
 
         Ok(())
