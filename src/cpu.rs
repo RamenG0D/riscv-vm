@@ -390,8 +390,8 @@ impl Mem {
 			},
 			Privilege::User | Privilege::Supervisor => {
 				let vpns = [
-					addr.get_bits(10, 11),
-					addr.get_bits(10, 21),
+					addr.get_bits(10, 12),
+					addr.get_bits(10, 22),
 				];
 
 				self.walk_page(addr, 1, self.ppn, &vpns, access)
