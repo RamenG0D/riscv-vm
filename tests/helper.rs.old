@@ -31,7 +31,7 @@ pub fn expected_fregs(non_zero_regs: Vec<(usize, f32)>) -> [f32; REGISTERS_COUNT
 }
 
 /// Start a test and check if the registers are expected.
-pub fn run(emu: &mut Cpu, data: Vec<u8>, expected_xregs: &[u32; 32], expected_fregs: &[f32; 32]) {
+pub fn run(emu: &mut impl Cpu, data: Vec<u8>, expected_xregs: &[u32; 32], expected_fregs: &[f32; 32]) {
     let len = data.len() as u32;
 
     // emu.is_debug = true;
