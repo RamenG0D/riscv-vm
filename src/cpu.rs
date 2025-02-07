@@ -496,16 +496,14 @@ impl Cpu for Riscv32Cpu {
 impl Riscv32Cpu {
 	pub fn new() -> Self {
         trace!("Initializing CPU...");
-        let mut registers = XRegisters::new();
-        registers[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
-        registers[11] = POINTER_TO_DTB; // pointer to device tree blob
+        let mut exec = Executor::new();
+        exec.xregs[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
+        exec.xregs[11] = POINTER_TO_DTB; // pointer to device tree blob
 
-        let cpu = Self {
-			exec: Executor::new(),
+        Self {
 			mem: Mem::new(),
-        };
-        trace!("CPU initialized");
-        cpu
+			exec,
+        }
     }
 
 	pub fn dump_csr(&self) {
@@ -1311,7 +1309,7 @@ impl Executor {
             "t3", "t4", "t5", "t6",
         ];
         info!("{:-^80}", "registers");
-        info!("{:3}({:^4}) = {:<#18x}", "pc", "pc", cpu.get_pc());
+        info!("{0:3}({0:^4}) = {1:<#18x}", "pc", cpu.get_pc());
         for i in (0..32).step_by(4) {
             let (i0, i1, i2, i3) = (
                 format!("x{}", i),
