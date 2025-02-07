@@ -2,15 +2,13 @@ use crate::{
     bit_ops::zero_extend, bus::{Bus, Device, VirtualDevice}, csr::{ CpuCsr, Csr, CsrAddress, MEPC, MSTATUS, SATP }, memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    }, registers::{FRegisters, XRegisterSize, XRegisters}, trap::{Exception, Trap}
+    }, registers::{FRegisters, XRegisterSize, XRegisters}, rom::POINTER_TO_DTB, trap::{Exception, Trap}
 };
 use bit_ops::BitOps;
 use log::{debug, error, info, trace, warn};
 use riscv_decoder::{
     decoded_inst::InstructionDecoded, decoder::try_decode
 };
-
-pub const POINTER_TO_DTB: u32 = 0x1020;
 
 /// The page size (4 KiB) for the virtual memory system.
 const PAGE_SIZE: u32 = 4096;
@@ -498,6 +496,7 @@ impl Riscv32Cpu {
         trace!("Initializing CPU...");
         let mut exec = Executor::new();
         exec.xregs[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
+		exec.xregs[10] = 0;
         exec.xregs[11] = POINTER_TO_DTB; // pointer to device tree blob
 
         Self {

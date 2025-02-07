@@ -6,6 +6,8 @@ use crate::memory::dram::Sizes;
 use crate::memory::virtual_memory::MemorySize;
 use crate::trap::Exception;
 
+pub const POINTER_TO_DTB: u32 = 0x1020;
+
 /// The address which the mask ROM starts.
 pub const MROM_BASE: u32 = 0x1000;
 /// the size of the mask ROM
@@ -110,26 +112,6 @@ fn dtb() -> Vec<u8> {
     // turn our dtb string into bytes
     let dt = DeviceTree::from_dts_bytes(DTS.as_bytes());
     dt.generate_dtb()
-
-    // TODO: Make this content more flexible depending on the number of cpus.
-    // Reference code is https://github.com/riscv/riscv-isa-sim/blob/66b44bfbedda562a32e4a2cd0716afbf731b69cd/riscv/dts.cc#L38-L54
-    /*const DTB_NAME: &str = "device_tree_blob.dtb";
-    const DTS_NAME: &str = "device_tree_source.dts";
-
-    std::fs::write(DTS_NAME, DTS).expect("Failed to write the device tree source");
-
-    Command::new("dtc")
-        .arg("-I")
-        .arg("dts")
-        .arg("-O")
-        .arg("dtb")
-        .arg("-o")
-        .arg(DTB_NAME)
-        .arg(DTS_NAME)
-        .output()
-        .expect("Failed to compile the device tree source");
-
-    std::fs::read("device_tree_blob.dtb").expect("Failed to read the device tree blob")*/
 }
 
 /// The read-only memory (ROM).
