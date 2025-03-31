@@ -1,25 +1,33 @@
 [package]
 name = "riscv-vm"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
+authors = ["RamenG0D"]
+description = "A RISC-V virtual machine emulator which supports running the RV32IMAFDC isa instruction set"
+homepage = "https://github.com/RamenG0D/riscv-vm"
+repository = "https://github.com/RamenG0D/riscv-vm"
 
 [lib]
 crate-type = ["rlib"]
 
 [dependencies]
 bit_ops = "0.1.13"
-bitfield = "0.18.1"
+bitfield = "0.19.0"
 chrono = "0.4.38"
-
-# logging
-colored = "3.0.0"
-log = "0.4.22"
-fern = { version = "0.7.0", features = ["colored"] }
 thiserror = "2.0.11"
-either = "1.13.0"
+
+# logging utils
+fern = { version = "0.7.0", features = ["colored"] }
+log = "0.4.22"
+anyhow = "1.0.97"
 
 [dependencies.devicetree-tool]
 git = "https://github.com/RamenG0D/devicetree-tool.git"
 
 [dependencies.riscv-decoder]
 git = "https://github.com/RamenG0D/riscv-decoder.git"
+
+[build-dependencies]
+rustc_version = "0.4.1"
+git2 = "0.20.1"
+anyhow = "1.0.97"
