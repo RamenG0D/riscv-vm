@@ -1,6 +1,6 @@
 [package]
 name = "riscv-vm"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["RamenG0D"]
 description = "A RISC-V virtual machine emulator which supports running the RV32IMAFDC isa instruction set"
