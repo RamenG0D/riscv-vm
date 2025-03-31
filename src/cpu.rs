@@ -1,13 +1,21 @@
+use std::collections::HashMap;
+
 use crate::{
-    bit_ops::zero_extend, bus::{Bus, Device, VirtualDevice}, csr::{ CpuCsr, Csr, CsrAddress, MEPC, MSTATUS, SATP }, memory::{
+    bus::{Bus, Device, VirtualDevice},
+    csr::{CpuCsr, Csr, CsrAddress, MEPC, MSTATUS, SATP, SEPC, SSTATUS},
+    memory::{
         dram::{Sizes, DRAM_BASE, DRAM_SIZE},
         virtual_memory::MemorySize,
-    }, registers::{FRegisters, XRegisterSize, XRegisters}, rom::POINTER_TO_DTB, trap::{Exception, Trap}
+    },
+    registers::{FRegisters, XRegisterSize, XRegisters},
+    rom::POINTER_TO_DTB,
+    trap::{Exception, Trap},
 };
+use anyhow::{bail, Result};
 use bit_ops::BitOps;
 use log::{debug, error, info, trace, warn};
 use riscv_decoder::{
-    decoded_inst::InstructionDecoded, decoder::try_decode
+    decoded_inst::InstructionDecoded, decoder::try_decode, instructions::compressed::is_compressed,
 };
 
 /// The page size (4 KiB) for the virtual memory system.
@@ -17,210 +25,144 @@ const PTE_SIZE: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AccessType {
-	Executable,
-	Readable,
-	Writable,
-	None,
+    Executable,
+    Readable,
+    Writable,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Privilege {
-	User,
-	Supervisor,
-	Machine,
-	// Reserved,
+    User,
+    Supervisor,
+    Machine,
+    // Reserved,
 }
 
 pub struct Mem {
-	/// program counter
+    /// program counter
     pc: XRegisterSize,
 
     /// little endian memory
     bus: Bus,
 
-	/// Csr registers
-	csr: CpuCsr,
+    /// Csr registers
+    csr: CpuCsr,
 
-	/// the current Privilege level of the cpu dur5
-	privilege: Privilege,
+    /// the current Privilege level of the cpu dur5
+    privilege: Privilege,
 
-	/// SV32 paging flag.
+    /// SV32 paging flag.
     enable_paging: bool,
     /// Physical page number (PPN)
-    ppn: u32,
+    ppn: u64,
+}
+
+impl Default for Mem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Mem {
-	pub fn new() -> Self {
-		Self {
-			pc: DRAM_BASE,
+    pub fn new() -> Self {
+        Self {
+            pc: DRAM_BASE as u32,
             bus: Bus::new(),
-			csr: CpuCsr::new(),
-			enable_paging: false,
-			ppn: 0,
-			privilege: Privilege::Machine
-		}
-	}
+            csr: CpuCsr::new(),
+            enable_paging: false,
+            ppn: 0,
+            privilege: Privilege::Machine,
+        }
+    }
 
-	pub fn dump_csr(&self) {
-		self.csr.dump();
-	}
+    pub fn dump_csr(&self) {
+        self.csr.dump();
+    }
 
-	fn walk_page(&mut self, address: XRegisterSize, level: u32, pppn: u32, vpns: &[u32; 2], access: AccessType) -> Result<XRegisterSize, Exception> {
-		info!("Traversing page: VA: {:#X} Level: {:#X} PPN: {:#X} VPNs: {{ {3:}({3:#X}), {4:}({4:#X}) }}", address, level, pppn, vpns[0], vpns[1]);
-		let pte_address = (pppn * PAGE_SIZE) + (vpns[level as usize] * PTE_SIZE);
-		let pte = self.read_raw(pte_address, Sizes::Word)?;
-		info!("PTE: {:#X}", pte);
-		let ppn = pte.get_bits(22, 10);
-		let ppns = [
-			pte.get_bits(10, 10),
-			pte.get_bits(12, 20),
-		];
-		// let _rsw = pte.get_bits(2, 8);
-		let d = pte.is_set(7);
-		let a = pte.is_set(6);
-		// let _g = pte.is_set(5);
-		// let _u = pte.is_set(4);
-		let x = pte.is_set(3);
-		let w = pte.is_set(2);
-		let r = pte.is_set(1);
-		let v = pte.is_set(0);
+    fn translate_vaddr(&mut self, vaddr: u32, access: AccessType) -> Result<u64> {
+        info!("Translating address: {:#X}", vaddr);
+        info!("Privilege: {:?}", self.privilege);
 
-		info!("d: {d}");
-		info!("a: {a}");
-		info!("x: {x}");
-		info!("w: {w}");
-		info!("r: {r}");
-		info!("v: {v}");
+        bitfield::bitfield! {
+            struct VAddr(u32);
+            impl Debug;
+            pgoff, _: 11, 0; // page offset
+            vpn, _: 31, 12; // the whole vpn
+            vpn0, _: 21, 12; // first part of the vpn
+            vpn1, _: 31, 22; // second part of the vpn
+        }
 
-		if !v || (!r && w) {
-			warn!("Page not valid or writable");
-			return Err(Exception::LoadPageFault(address));
-		}
+        let vaddr = VAddr(vaddr);
 
-		if !r && !x {
-			return match level {
-				0 => {
-					warn!("Leaf page not readable or executable");
-					Err(Exception::LoadPageFault(address))
-				}
-				_ => {
-					info!("Walking to next level");
-					self.walk_page(address, level - 1, ppn, vpns, access)
-				}
-			};
-		}
-
-		// Leaf page found
-
-		if a || (match &access { AccessType::Writable => !d, _ => false }) {
-			info!("Page accessed or dirty");
-			let mut new_pte = pte.set_bit(6);
-			if access == AccessType::Writable {
-				new_pte = new_pte.set_bit(7);
-			}
-			self.write_raw(pte_address, new_pte, Sizes::Word)?;
-		}
-
-		match access {
-			AccessType::Executable => if !x {
-				warn!("Page not executable");
-				return Err(Exception::LoadPageFault(address));
-			},
-			AccessType::Readable => if !r {
-				warn!("Page not readable");
-				return Err(Exception::LoadPageFault(address));
-			},
-			AccessType::Writable => if !w {
-				warn!("Page not writable");
-				return Err(Exception::LoadPageFault(address));
-			},
-			_ => {}
-		};
-
-		let offset = bit_ops::bitops_u32::get_bits(address, 12, 0);
-		// @TODO: Optimize
-		let p_address = match level {
-			1 => {
-				if ppns[0] != 0 {
-					warn!("ppns[0] != 0");
-					return Err(Exception::LoadPageFault(address));
-				}
-				(ppns[1] << 22) | (vpns[0] << 12) | offset
-			},
-			0 => (pppn << 12) | offset,
-			_ => unreachable!(),
-		};
-
-		info!("Hit: {:#X}", p_address);
-
-		Ok(p_address)
-	}
-
-	/*
-	The risc-v Sv32 scheme has two levels of page-table
-	pages. A page-table page contains 1024 32-bit PTEs.
-	A 32-bit virtual address is split into five fields:
-	  22..31 -- 10 bits of level-1 index.
-	  12..21 -- 10 bits of level-0 index.
-	   0..11 -- 12 bits of byte offset within the page
-	The 32 bit PTE looks like this:
-	  20..31 -- 12 bits of level-1 index.
-	  10..19 -- 12 bits of level-0 index.
-	   8.. 9 --  2 bits reserved for OS
-	   0.. 7 -- flags: Valid/Read/Write/Execute/User/Global/Accessed/Dirty
-	*/
-	fn translate_address(&mut self, addr: XRegisterSize, access: AccessType) -> Result<XRegisterSize, Exception> {
-		if !self.enable_paging {
-			return Ok(addr);
-		}
-
-		info!("Translating address: {:#X}", addr);
-		info!("Privilege: {:?}", self.privilege);
-
-		// 4.3.2 Virtual Address Translation Process
+        // 4.3.2 Virtual Address Translation Process
         // (The RISC-V Instruction Set Manual Volume II-Privileged Architecture_20190608)
         // A virtual address va is translated into a physical address pa as follows:
-        /*let vpns = [
-			addr.get_bits(10, 12),
-			addr.get_bits(10, 22),
-		];
-		let levels = 2;
-		info!("ADDRESS = {0:#X}[{0:#b}]", addr);
-		info!("VPN[0]  = {0:#010X}[{0:#012b}]", vpns[0]);
-		info!("VPN[1]  = {0:#010X}[{0:#012b}]", vpns[1]);
+        const LEVELS: i32 = 2;
 
-        // 1. Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1. (For Sv32, PAGESIZE=212 and LEVELS=2.)
-        let mut page = self.ppn * PAGE_SIZE;
-        let mut i: i32 = levels - 1;
-        let mut pte;
+        info!("PPN    = {0:#X}[{0:#08b}]", self.ppn);
+        info!("VADDR  = {:#X}", vaddr.0);
+        info!("VPN[0] = {0:#010X}[{0:#012b}]", vaddr.vpn0());
+        info!("VPN[1] = {0:#010X}[{0:#012b}]", vaddr.vpn1());
+        let vpns = [vaddr.vpn0(), vaddr.vpn1()];
 
-		info!("PAGE: {:#X}", self.ppn);
+        // 1. Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1. (For Sv32, PAGESIZE=powi(2, 12) and LEVELS=2.)
+        let mut page = self.ppn * PAGE_SIZE as u64;
+
+        let mut i: i32 = LEVELS - 1;
+        let mut pte: Pte;
+
+        bitfield::bitfield! {
+            struct Pte(u32);
+            impl Debug;
+            v, set_v: 0;
+            r, set_r: 1;
+            w, set_w: 2;
+            x, set_x: 3;
+            u, set_u: 4;
+            g, set_g: 5;
+            a, set_a: 6;
+            d, set_d: 7;
+            rsw, set_rsw: 9, 8;
+            ppn, set_ppn: 31, 10;
+            ppn0, set_ppn0: 19, 10;
+            ppn1, set_ppn1: 31, 20;
+        }
 
         loop {
             // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32,
             //    PTESIZE=4.) If accessing pte violates a PMA or PMP check, raise an access
             //    exception corresponding to the original access type.
-			info!("PTE ADDRESS: {:#X}", vpns[i as usize] * PTE_SIZE);
-            pte = self.read_raw(vpns[i as usize] * PTE_SIZE, Sizes::Word)?;
-			info!("PTE: {:#X}", pte);
+            let pte_addr = page + (vpns[i as usize] * PTE_SIZE) as u64;
+            info!("PTE ADDRESS: {:#X}", pte_addr);
+            pte = Pte(self.read_raw(pte_addr, Sizes::Word)?);
+            // info!("PTE: {:?}", pte);
 
             // 3. If pte.v = 0, or if pte.r = 0 and pte.w = 1, stop and raise a page-fault
             //    exception corresponding to the original access type.
-            let v = pte.is_set(0);
-            let r = pte.is_set(1);
-            let w = pte.is_set(2);
-            let x = pte.is_set(3);
+            info!(
+                "V: {}, R: {}, W: {}, X: {}",
+                pte.v(),
+                pte.r(),
+                pte.w(),
+                pte.x()
+            );
 
-			info!("V: {v}, R: {r}, W: {w}, X: {x}");
-
-            if !v || (!r && w) {
-				error!("Page not valid or writable");
+            if !pte.v() || (!pte.r() && pte.w()) {
+                error!("Page not valid or writable!");
                 match &access {
-                    AccessType::Executable => return Err(Exception::InstructionPageFault(addr)),
-                    AccessType::Readable => return Err(Exception::LoadPageFault(addr)),
-                    AccessType::Writable => return Err(Exception::StorePageFault(addr)),
-					AccessType::None => return Err(Exception::InstructionPageFault(addr)),
+                    AccessType::Executable => bail!(Exception::InstructionPageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::Readable => bail!(Exception::LoadPageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::Writable => bail!(Exception::StorePageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::None => bail!(Exception::InstructionPageFault {
+                        address: vaddr.0 as u64
+                    }),
                 }
             }
 
@@ -229,25 +171,32 @@ impl Mem {
             //    Let i = i − 1. If i < 0, stop and raise a page-fault exception
             //    corresponding to the original access type. Otherwise,
             //    let a = pte.ppn × PAGESIZE and go to step 2.
-            if r || x {
-				info!("Skipping to step 5");
+            if pte.r() || pte.x() {
+                info!("Page is a leaf!");
                 break;
             }
 
+            info!("Page not a leaf PTE, going to next level");
+
             i -= 1;
 
-			let ppn = pte.get_bits(22, 10);
-            page = ppn * PAGE_SIZE;
+            page = pte.ppn() as u64 * PAGE_SIZE as u64;
+            info!("Page = {:#08X}", page);
 
-			info!("PPN: {:#X}", ppn);
-			info!("Page: {:#X}", page);
-
-			if i < 0 {
+            if i < 0 {
                 match &access {
-                    AccessType::Executable => return Err(Exception::InstructionPageFault(addr)),
-                    AccessType::Readable => return Err(Exception::LoadPageFault(addr)),
-                    AccessType::Writable => return Err(Exception::StorePageFault(addr)),
-					AccessType::None => return Err(Exception::InstructionPageFault(addr)),
+                    AccessType::Executable => bail!(Exception::InstructionPageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::Readable => bail!(Exception::LoadPageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::Writable => bail!(Exception::StorePageFault {
+                        address: vaddr.0 as u64
+                    }),
+                    AccessType::None => bail!(Exception::InstructionPageFault {
+                        address: vaddr.0 as u64
+                    }),
                 }
             }
         }
@@ -275,26 +224,31 @@ impl Mem {
 
         // 6. If i > 0 and pte.ppn[i−1:0] != 0, this is a misaligned superpage; stop and
         //    raise a page-fault exception corresponding to the original access type.
-		let ppns = [
-			pte.get_bits(10, 10),
-			pte.get_bits(12, 20),
-		];
+        let ppns = [pte.ppn0(), pte.ppn1()];
 
-		info!("PPNs: {{ {0:}({0:#X}), {1:}({1:#X}) }}", ppns[0], ppns[1]);
+        info!("PPNs: {{ {0:}({0:#X}), {1:}({1:#X}) }}", ppns[0], ppns[1]);
 
         if i > 0 {
-			info!("Checking for misaligned superpage");
+            info!("Checking for misaligned superpage");
 
             for j in (0..i).rev() {
                 if ppns[j as usize] != 0 {
-					info!("superpage is misaligned");
+                    info!("superpage is misaligned");
 
                     // A misaligned superpage.
                     match &access {
-                        AccessType::Executable => return Err(Exception::InstructionPageFault(addr)),
-                        AccessType::Readable => return Err(Exception::LoadPageFault(addr)),
-                        AccessType::Writable => return Err(Exception::StorePageFault(addr)),
-						AccessType::None => return Err(Exception::InstructionPageFault(addr)),
+                        AccessType::Executable => bail!(Exception::InstructionPageFault {
+                            address: vaddr.0 as u64
+                        }),
+                        AccessType::Readable => bail!(Exception::LoadPageFault {
+                            address: vaddr.0 as u64
+                        }),
+                        AccessType::Writable => bail!(Exception::StorePageFault {
+                            address: vaddr.0 as u64
+                        }),
+                        AccessType::None => bail!(Exception::InstructionPageFault {
+                            address: vaddr.0 as u64
+                        }),
                     }
                 }
             }
@@ -307,231 +261,320 @@ impl Mem {
         //    corresponding to the original access type.
         //    • This update and the loading of pte in step 2 must be atomic; in particular,
         //    no intervening store to the PTE may be perceived to have occurred in-between.
-        let a = pte.is_set(6);
-        let d = pte.is_set(7);
 
-		info!("A: {a}, D: {d}");
+        info!("A: {}, D: {}", pte.a(), pte.d());
 
-        if !a || (access == AccessType::Writable && !d) {
-			info!("Setting pte.a to 1 and pte.d to 1");
-
+        if !pte.a() || (access == AccessType::Writable && !pte.d()) {
+            info!("Setting pte.a to 1 and pte.d to 1");
             // Set pte.a to 1 and, if the memory access is a store, also set pte.d to 1.
-            pte = if let AccessType::Writable = access {
-				pte.set_bit(6).set_bit(7)
-            } else {
-				pte.set_bit(6)
-			};
+            pte.set_a(true);
+            if matches!(access, AccessType::Writable) {
+                pte.set_d(true);
+            }
 
             // TODO: PMA or PMP check.
 
-            // Update the value of address satp.ppn × PAGESIZE + va.vpn[i] × PTESIZE with new pte
-            // value.
+            // Update the value of address satp.ppn × PAGESIZE + va.vpn[i] × PTESIZE with new pte value
+            // self.write_raw(page + vpns[i as usize] * PTE_SIZE, pte as u32, Sizes::Word)?;
+
             // TODO: If this is enabled, running xv6 fails.
-            // self.bus.write(self.page_table + vpn[i as usize] * 8, pte, 64)?;
+            // self.bus.write(page + vpn[i as usize] * PTE_SIZE, pte, 64)?;
         }
 
         // 8. The translation is successful. The translated physical address is given as
         //    follows:
-        //    • pa.pgoff = va.pgoff.
-        //    • If i > 0, then this is a superpage translation and pa.ppn[i−1:0] =
-        //    va.vpn[i−1:0].
-        //    • pa.ppn[LEVELS−1:i] = pte.ppn[LEVELS−1:i].
-        let offset = addr.get_bits(11, 0);
+        //    • pa.pgoff = va.pgoff
+        //    • If i > 0, then this is a superpage translation and pa.ppn[i−1:0] = va.vpn[i−1:0]
+        //    • pa.ppn[LEVELS−1:i] = pte.ppn[LEVELS−1:i]
+        let offset = vaddr.pgoff();
 
-		info!("Offset: {:#X}", offset);
-		info!("I: {:#X}", i);
+        info!("Offset: {:#X}", offset);
+        info!("I: {:#X}", i);
 
-        let paddr = match i {
-			1 => {
-				if ppns[0] != 0 {
-					warn!("ppns[0] != 0");
-					return Err(Exception::LoadPageFault(addr));
-				}
-				(ppns[1] << 22) | (vpns[0] << 12) | offset
-			},
-			0 => (page << 12) | offset,
+        bitfield::bitfield! {
+            struct PAddr(u64);
+            impl Debug;
+            _, offset: 11, 0;
+            _, ppn: 33, 12; // the whole ppn
+            _, ppn0: 21, 12; // first part of the ppn
+            _, ppn1: 33, 22; // second part of the ppn
+        }
+
+        let mut paddr = PAddr(0);
+        match i {
+            1 => {
+                if ppns[0] != 0 {
+                    warn!("ppns[0] != 0");
+                    bail!(Exception::LoadPageFault {
+                        address: vaddr.0 as u64
+                    });
+                }
+                paddr.offset(offset as u64);
+                paddr.ppn0(vpns[0] as u64);
+                paddr.ppn1(ppns[1] as u64);
+            }
+            0 => {
+                // (page << 12) | offset
+                paddr.offset(offset as u64);
+                paddr.ppn(page as u64);
+            }
             _ => match access {
-                AccessType::Executable => return Err(Exception::InstructionPageFault(addr)),
-                AccessType::Readable => return Err(Exception::LoadPageFault(addr)),
-                AccessType::Writable => return Err(Exception::StorePageFault(addr)),
-				AccessType::None => return Err(Exception::InstructionPageFault(addr)),
+                AccessType::Executable => bail!(Exception::InstructionPageFault {
+                    address: vaddr.0 as u64
+                }),
+                AccessType::Readable => bail!(Exception::LoadPageFault {
+                    address: vaddr.0 as u64
+                }),
+                AccessType::Writable => bail!(Exception::StorePageFault {
+                    address: vaddr.0 as u64
+                }),
+                AccessType::None => bail!(Exception::InstructionPageFault {
+                    address: vaddr.0 as u64
+                }),
             },
         };
 
-		info!("Translated address: {:#X}", paddr);
+        info!("Translated address: {:#X}", paddr.0);
 
-		Ok(paddr)*/
+        Ok(paddr.0)
+    }
 
-		match &self.privilege {
-			Privilege::Machine => match &access {
-				AccessType::Executable => Ok(addr),
-				_ => match self.read_csr(MSTATUS).get_bit(17) {
-					0 => Ok(addr),
-					_ => {
-						let privilege_mode = match self.read_csr(MSTATUS).get_bits(2, 9) {
-							0 => Privilege::User,
-							1 => Privilege::Supervisor,
-							_ => Privilege::Machine,
-						};
-						match privilege_mode {
-							Privilege::Machine => Ok(addr),
-							_ => {
-								let current_privilege_mode = self.get_privilege().clone();
-								self.set_privilege(privilege_mode);
-								let result = self.translate_address(addr, access);
-								self.set_privilege(current_privilege_mode);
-								result
-							}
-						}
-					}
-				}
-			},
-			Privilege::User | Privilege::Supervisor => {
-				let vpns = [
-					addr.get_bits(10, 12),
-					addr.get_bits(10, 22),
-				];
-
-				self.walk_page(addr, 1, self.ppn, &vpns, access)
-			}
-		}
-	}
-
-	fn read_raw(&mut self, addr: XRegisterSize, size: Sizes) -> Result<XRegisterSize, Exception> {
-		self.bus.read(addr, size)
-	}
-	fn write_raw(&mut self, addr: XRegisterSize, value: XRegisterSize, size: Sizes) -> Result<(), Exception> {
-		self.bus.write(addr, value, size)
-	}
-}
-
-impl Cpu for Mem {
-	fn get_pc(&self) -> XRegisterSize {
-		self.pc
-	}
-	fn set_pc(&mut self, value: XRegisterSize) {
-		self.pc = value;
-	}
-
-	fn read(&mut self, addr: XRegisterSize, size: Sizes, access: AccessType) -> Result<XRegisterSize, Exception> {
-		let paddr = self.translate_address(addr, access)?;
-		self.bus.read(paddr, size)
-	}
-	fn write(&mut self, addr: XRegisterSize, value: MemorySize, size: Sizes, access: AccessType) -> Result<(), Exception> {
-		let paddr = self.translate_address(addr, access)?;
-		self.bus.write(paddr, value, size)
-	}
-
-	fn state(&mut self) -> &impl Csr {
-		&self.csr
-	}
-	fn state_mut(&mut self) -> &mut impl Csr {
-		&mut self.csr
-	}
-
-	fn get_privilege(&self) -> Privilege {
-		self.privilege
-	}
-	fn set_privilege(&mut self, npriv: Privilege) -> () {
-		self.privilege = npriv;
-	}
-
-	fn update_paging(&mut self, value: u32) -> () {
-		info!("Updating paging");
-
-		// code in xv6-riscv used to enable paging
-		// #define SATP_SV32 (1L << 31)
-		// #define MAKE_SATP(pagetable) (SATP_SV32 | (((uint32)pagetable) >> 12)) // 32 bit
-		// w_satp(MAKE_SATP(kernel_pagetable));
-		self.ppn = value.get_bits(22, 0);
-		self.enable_paging = value.is_set(31);
-		// self.enable_paging = value & 0x80000000 != 0;
-		// self.ppn = value & 0x3fffff;
-
-		// println!("SATP: {0:}({0:#X})[{0:#032b}]", value);
-		// println!("PPN: {0:}({0:#X})[{0:#032b}]", self.ppn);
-
-		info!("Paging enabled: {}, ppn: {:#X}", self.enable_paging, self.ppn);
-	}
-}
-
-// 32 bit RiscV CPU architecture
-pub struct Riscv32Cpu {
-	exec: Executor,
-	mem: Mem,
-}
-
-impl Cpu for Riscv32Cpu {
-	fn get_pc(&self) -> XRegisterSize {
-		self.mem.get_pc()
-	}
-	fn get_privilege(&self) -> Privilege {
-		self.mem.get_privilege()
-	}
-	fn set_pc(&mut self, value: XRegisterSize) -> () {
-		self.mem.set_pc(value);
-	}
-	fn read(&mut self, addr: XRegisterSize, size: Sizes, access: AccessType) -> Result<XRegisterSize, Exception> {
-		self.mem.read(addr, size, access)
-	}
-	fn write(&mut self, addr: XRegisterSize, value: MemorySize, size: Sizes, access: AccessType) -> Result<(), Exception> {
-		self.mem.write(addr, value, size, access)
-	}
-	fn state(&mut self) -> &impl Csr {
-		self.mem.state()
-	}
-	fn state_mut(&mut self) -> &mut impl Csr {
-		self.mem.state_mut()
-	}
-	fn set_privilege(&mut self, npriv: Privilege) -> () {
-		self.mem.set_privilege(npriv)
-	}
-	fn update_paging(&mut self, value: u32) -> () {
-		self.mem.update_paging(value)
-	}
-}
-
-impl Riscv32Cpu {
-	pub fn new() -> Self {
-        trace!("Initializing CPU...");
-        let mut exec = Executor::new();
-        exec.xregs[2] = DRAM_BASE + DRAM_SIZE; // stack pointer
-		exec.xregs[10] = 0;
-        exec.xregs[11] = POINTER_TO_DTB; // pointer to device tree blob
-
-        Self {
-			mem: Mem::new(),
-			exec,
+    fn parse_priv(value: u32) -> Privilege {
+        match value {
+            0 => Privilege::Machine,
+            1 => Privilege::User,
+            3 => Privilege::Supervisor,
+            _ => panic!("Invalid privilege level: {:#X}", value),
         }
     }
 
-	pub fn dump_csr(&self) {
-		self.mem.dump_csr();
-	}
+    /*
+    The risc-v Sv32 scheme has two levels of page-table
+    pages. A page-table page contains 1024 32-bit PTEs.
+    A 32-bit virtual address is split into five fields:
+      22..31 -- 10 bits of level-1 index.
+      12..21 -- 10 bits of level-0 index.
+       0..11 -- 12 bits of byte offset within the page
+    The 32 bit PTE looks like this:
+      20..31 -- 12 bits of level-1 index.
+      10..19 -- 12 bits of level-0 index.
+       8.. 9 --  2 bits reserved for OS
+       0.. 7 -- flags: Valid/Read/Write/Execute/User/Global/Accessed/Dirty
+    */
+    fn translate_address(&mut self, addr: u32, access: AccessType) -> Result<u64> {
+        if !self.enable_paging {
+            return Ok(addr as u64);
+        }
+        match (
+            self.get_privilege(),
+            &access,
+            !self.read_csr(MSTATUS).is_set(17 /* MPRV */),
+        ) {
+            (Privilege::Machine, AccessType::Executable, _) | (Privilege::Machine, _, true) => {
+                return Ok(addr as u64);
+            }
+            (Privilege::Machine, _, _) => {
+                let mstatus = self.read_csr(MSTATUS);
+                let mpp = mstatus.get_bits(2, 9);
+                let npriv = Self::parse_priv(mpp);
+                if matches!(npriv, Privilege::Machine) {
+                    return Ok(addr as u64);
+                } else {
+                    let oldpriv = self.get_privilege();
+                    self.set_privilege(npriv);
+                    let result = self.translate_vaddr(addr, access)?;
+                    self.set_privilege(oldpriv);
+                    return Ok(result);
+                }
+            }
+            // translate the address
+            (Privilege::User, _, _) | (Privilege::Supervisor, _, _) => {
+                self.translate_vaddr(addr, access)
+            }
+        }
+    }
 
-	pub fn get_interface(&mut self) -> &mut Mem {
-		&mut self.mem
-	}
+    pub fn read_raw(&mut self, addr: u64, size: Sizes) -> Result<XRegisterSize> {
+        self.bus.read(addr as u64, size)
+    }
 
-	pub fn read(&mut self, addr: MemorySize, size: Sizes, access: AccessType) -> Result<MemorySize, Exception> {
-		self.mem.read(addr, size, access)
-	}
+    pub fn write_raw(&mut self, addr: u64, value: XRegisterSize, size: Sizes) -> Result<()> {
+        self.bus.write(addr as u64, value, size)
+    }
+}
 
-	pub fn write(&mut self, addr: MemorySize, value: MemorySize, size: Sizes, access: AccessType) -> Result<(), Exception> {
-		self.mem.write(addr, value, size, access)
-	}
+impl Cpu for Mem {
+    fn get_pc(&self) -> XRegisterSize {
+        self.pc
+    }
+    fn set_pc(&mut self, value: XRegisterSize) {
+        self.pc = value;
+    }
 
-	pub fn get_pc(&self) -> MemorySize {
-		self.mem.get_pc()
-	}
+    fn read(
+        &mut self,
+        addr: XRegisterSize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<XRegisterSize> {
+        let paddr = self.translate_address(addr, access)?;
+        self.bus.read(paddr, size)
+    }
+    fn write(
+        &mut self,
+        addr: XRegisterSize,
+        value: MemorySize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<()> {
+        let paddr = self.translate_address(addr, access)?;
+        self.bus.write(paddr, value, size)
+    }
 
-	pub fn set_pc(&mut self, pc: MemorySize) {
-		self.mem.set_pc(pc);
-	}
+    fn state(&mut self) -> &impl Csr {
+        &self.csr
+    }
+    fn state_mut(&mut self) -> &mut impl Csr {
+        &mut self.csr
+    }
 
-	pub fn dump_registers(&self) {
-		self.exec.dump_registers(&self.mem);
-	}
+    fn get_privilege(&self) -> Privilege {
+        self.privilege
+    }
+    fn set_privilege(&mut self, npriv: Privilege) {
+        self.privilege = npriv;
+    }
+
+    fn update_paging(&mut self, value: u32) {
+        info!("Updating paging");
+
+        // code in xv6-riscv used to enable paging
+        // #define SATP_SV32 (1L << 31)
+        // #define MAKE_SATP(pagetable) (SATP_SV32 | (((uint32)pagetable) >> 12)) // 32 bit
+        // w_satp(MAKE_SATP(kernel_pagetable));
+        self.ppn = value.get_bits(22, 0) as u64;
+        self.enable_paging = value.is_set(31);
+        // self.enable_paging = value & 0x80000000 != 0;
+        // self.ppn = value & 0x3fffff;
+
+        info!(
+            "Paging enabled: {}, ppn: {:#X}",
+            self.enable_paging, self.ppn
+        );
+    }
+}
+
+// The return is an optional trap b/c maybe the syscall wishes to exit or not return
+pub type Syscall = fn(&mut Riscv32Cpu) -> Trap;
+
+// 32 bit RiscV CPU architecture
+pub struct Riscv32Cpu {
+    exec: Executor,
+    mem: Mem,
+
+    syscall_table: HashMap<u32, Syscall>,
+}
+
+impl Default for Riscv32Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cpu for Riscv32Cpu {
+    fn get_pc(&self) -> XRegisterSize {
+        self.mem.get_pc()
+    }
+    fn get_privilege(&self) -> Privilege {
+        self.mem.get_privilege()
+    }
+    fn set_pc(&mut self, value: XRegisterSize) {
+        self.mem.set_pc(value);
+    }
+    fn read(
+        &mut self,
+        addr: XRegisterSize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<XRegisterSize> {
+        self.mem.read(addr, size, access)
+    }
+    fn write(
+        &mut self,
+        addr: XRegisterSize,
+        value: MemorySize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<()> {
+        self.mem.write(addr, value, size, access)
+    }
+    fn state(&mut self) -> &impl Csr {
+        self.mem.state()
+    }
+    fn state_mut(&mut self) -> &mut impl Csr {
+        self.mem.state_mut()
+    }
+    fn set_privilege(&mut self, npriv: Privilege) {
+        self.mem.set_privilege(npriv)
+    }
+    fn update_paging(&mut self, value: u32) {
+        self.mem.update_paging(value)
+    }
+}
+
+impl Riscv32Cpu {
+    pub fn new() -> Self {
+        let mut exec = Executor::new();
+        exec.xregs[2] = (DRAM_BASE + DRAM_SIZE) as u32; // stack pointer
+        exec.xregs[10] = 0;
+        exec.xregs[11] = POINTER_TO_DTB; // pointer to device tree blob
+
+        Self {
+            mem: Mem::default(),
+            syscall_table: HashMap::new(),
+
+            exec,
+        }
+    }
+
+    pub fn dump_csr(&self) {
+        self.mem.dump_csr();
+    }
+
+    pub fn get_interface(&mut self) -> &mut Mem {
+        &mut self.mem
+    }
+
+    pub fn read(
+        &mut self,
+        addr: MemorySize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<MemorySize> {
+        self.mem.read(addr, size, access)
+    }
+
+    pub fn write(
+        &mut self,
+        addr: MemorySize,
+        value: MemorySize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<()> {
+        self.mem.write(addr, value, size, access)
+    }
+
+    pub fn get_pc(&self) -> MemorySize {
+        self.mem.get_pc()
+    }
+
+    pub fn set_pc(&mut self, pc: MemorySize) {
+        self.mem.set_pc(pc);
+    }
+
+    pub fn dump_registers(&self) {
+        self.exec.dump_registers(&self.mem);
+    }
 
     pub fn get_device<T>(&self) -> Option<&T>
     where
@@ -547,13 +590,13 @@ impl Riscv32Cpu {
         self.mem.bus.get_device_mut()
     }
 
-	pub fn get_devices_mut(&mut self) -> &mut Vec<VirtualDevice> {
-		self.mem.bus.get_devices_mut()
-	}
+    pub fn get_devices_mut(&mut self) -> &mut Vec<VirtualDevice> {
+        self.mem.bus.get_devices_mut()
+    }
 
-	pub fn get_devices(&self) -> &Vec<VirtualDevice> {
-		self.mem.bus.get_devices()
-	}
+    pub fn get_devices(&self) -> &Vec<VirtualDevice> {
+        self.mem.bus.get_devices()
+    }
 
     pub fn add_device(&mut self, device: VirtualDevice) {
         self.mem.bus.add_device(device);
@@ -582,146 +625,188 @@ impl Riscv32Cpu {
         }
     }
 
-	pub fn dump_memory(&mut self, addr: MemorySize, size: MemorySize) {
+    pub fn dump_memory(&mut self, addr: MemorySize, size: MemorySize) {
         debug!("{:-^80}", "memory");
         for i in 0..size {
-            let value = self.read(addr + i, Sizes::Byte, AccessType::Readable).unwrap();
+            let value = self
+                .read(addr + i, Sizes::Byte, AccessType::Readable)
+                .unwrap();
             debug!("{:#08x}: {:#02x}", addr + i, value);
         }
         debug!("{:-^80}", "");
     }
 
-	fn devices_increment(&mut self) {
-		for device in self.get_devices_mut().iter_mut() {
-			device.increment();
-		}
-	}
+    fn devices_increment(&mut self) {
+        for device in self.get_devices_mut().iter_mut() {
+            device.increment();
+        }
+    }
 
-	pub fn step(&mut self) -> Result<(), Exception> {
-		self.devices_increment();
+    pub fn step(&mut self) -> Result<()> {
+        self.devices_increment();
 
-		let inst = self.fetch()?;
+        let inst = self.fetch()?;
 
-		// Execute an instruction.
-		let trap = match self.exec.execute(&mut self.mem, inst) {
-			Ok(_) => Trap::Requested, // Return a placeholder trap
-			Err(exception) => {
-				warn!("Taking trap: {:#?}", exception);
-				exception.take_trap(self.get_interface())
-			}
-		};
+        // Execute an instruction.
+		let exec_trap = self.exec.execute(&mut self.mem, inst);
+        let trap = match exec_trap.map_err(|e| e.downcast::<Exception>().expect("Failed to downcast exception")) {
+            Ok(_) => Trap::Requested, // Return a placeholder trap
+            Err(Exception::EnvironmentCallFromMMode)
+            | Err(Exception::EnvironmentCallFromUMode)
+            | Err(Exception::EnvironmentCallFromSMode) => {
+                let syscall = self.get_register(17 /* register ( a7 ) */).unwrap();
+                println!("Syscall: {0:}[{0:#X}]", syscall);
+                match self.syscall_table.get(syscall) {
+                    Some(syscall) => syscall(self),
+                    None => {
+                        warn!("Unknown syscall: {:#X}", syscall);
+                        Trap::Fatal
+                    }
+                }
+            }
+            Err(exception) => {
+                warn!("Taking trap: {:#?}", exception);
+                exception.take_trap(self.get_interface())
+            }
+        };
 
-		if let Trap::Fatal = trap {
-			error!("pc: {:#x}, trap {:#?}", self.get_pc(), trap);
-		}
+        if matches!(trap, Trap::Fatal) {
+            error!("pc: {:#x}, trap {:#?}", self.get_pc(), trap);
+            bail!(Exception::Breakpoint);
+        }
 
-		Ok(())
-	}
+        Ok(())
+    }
 
-	pub fn run(&mut self) -> Result<(), Exception> {
-		loop {
-			self.step()?;
-		}
-	}
+    pub fn run(&mut self) -> Result<(), Exception> {
+        loop {
+            self.step().expect("Failed during execution of the CPU in step");
+        }
+    }
 
-    pub fn fetch(&mut self) -> Result<InstructionDecoded, Exception> {
+    pub fn register_syscall(&mut self, syscall: u32, handler: Syscall) {
+        if self.syscall_table.insert(syscall, handler).is_some() {
+            panic!("Syscall {:#X} already registered", syscall)
+        } else {
+            info!("Syscall {:#X} registered", syscall);
+        }
+    }
+
+    fn translate(&mut self, addr: u32, access: AccessType) -> Result<u64> {
+        self.mem.translate_address(addr, access)
+    }
+
+    pub fn fetch(&mut self) -> Result<InstructionDecoded> {
         // The result of the read method can be `Exception::LoadAccessFault`. In fetch(), an error
         // should be `Exception::InstructionAccessFault`.
-		// and we also need to check if we are reading from a virtual address or a physical address
-		let paddr = self.mem.translate_address(self.get_pc(), AccessType::Executable)?;
-		let inst = self.mem.read_raw(paddr, Sizes::Word)?;
+        // and we also need to check if we are reading from a virtual address or a physical address
+        let paddr = self
+            .translate(self.get_pc().wrapping_sub(4), AccessType::Executable)
+            .expect("Failed to translate address");
+        let inst = self
+            .mem
+            .read_raw(paddr, Sizes::Word)
+            .expect("Failed to read instruction");
 
-        /*if is_compressed(inst) {
-            self.mem.pc += 2;
-        } else {
-            self.mem.pc += 4;
-        }*/
-		self.mem.pc += 4;
+        self.mem.pc += if is_compressed(inst) { 2 } else { 4 };
 
         // decode the instruction (automatically detects if compressed)
-        let inst = try_decode(inst).map_err(|e| {
-            error!("Illegal instruction: {:#X} => {e:?}", inst);
-            Exception::IllegalInstruction(inst)
-        })?;
+        let inst = try_decode(inst)?;
 
-        debug!("{:#08X}: {inst}", self.get_pc() - 4);
+        debug!(target: "execution", "{:#08X}: {inst}", self.get_pc() - 4);
 
         Ok(inst)
     }
 }
 
 pub trait Cpu {
-	fn set_pc(&mut self, value: XRegisterSize) -> ();
-	fn get_pc(&self) -> XRegisterSize;
+    fn set_pc(&mut self, value: XRegisterSize);
+    fn get_pc(&self) -> XRegisterSize;
 
-	fn write(&mut self, addr: XRegisterSize, value: MemorySize, size: Sizes, access: AccessType) -> Result<(), Exception>;
-	fn read(&mut self, addr: XRegisterSize, size: Sizes, access: AccessType) -> Result<XRegisterSize, Exception>;
+    fn write(
+        &mut self,
+        addr: XRegisterSize,
+        value: MemorySize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<()>;
+    fn read(
+        &mut self,
+        addr: XRegisterSize,
+        size: Sizes,
+        access: AccessType,
+    ) -> Result<XRegisterSize>;
 
-	fn state(&mut self) -> &impl Csr;
-	fn state_mut(&mut self) -> &mut impl Csr;
+    fn state(&mut self) -> &impl Csr;
+    fn state_mut(&mut self) -> &mut impl Csr;
 
-	fn read_csr(&mut self, addr: CsrAddress) -> u32 {
-		self.state().read(addr)
-	}
-	fn write_csr(&mut self, addr: CsrAddress, value: u32) {
-		self.state_mut().write(addr, value);
-		if addr == SATP {
-			self.update_paging(value);
-		}
-	}
+    fn read_csr(&mut self, addr: CsrAddress) -> u32 {
+        self.state().read(addr)
+    }
+    fn write_csr(&mut self, addr: CsrAddress, value: u32) {
+        self.state_mut().write(addr, value);
+        if addr == SATP {
+            self.update_paging(value);
+        }
+    }
 
-	fn set_privilege(&mut self, npriv: Privilege) -> ();
-	fn get_privilege(&self) -> Privilege;
+    fn set_privilege(&mut self, npriv: Privilege);
+    fn get_privilege(&self) -> Privilege;
 
-	fn update_paging(&mut self, value: u32) -> ();
+    fn update_paging(&mut self, value: u32);
 }
 
 struct Executor {
-	xregs: XRegisters,
+    xregs: XRegisters,
     fregs: FRegisters,
 }
 
 impl Executor {
-	pub fn new() -> Self {
-		Self {
-			fregs: FRegisters::new(),
-			xregs: XRegisters::new(),
-		}
-	}
+    pub fn new() -> Self {
+        Self {
+            fregs: FRegisters::new(),
+            xregs: XRegisters::new(),
+        }
+    }
 
-    pub fn execute(&mut self, cpu: &mut impl Cpu, inst: InstructionDecoded) -> Result<(), Exception> {
+    pub fn execute(
+        &mut self,
+        cpu: &mut impl Cpu,
+        inst: InstructionDecoded,
+    ) -> Result<()> {
         // x0 must always be zero (irl the circuit is literally hardwired to electriacal equivalent of 0)
         self.xregs[0] = 0;
 
         match inst {
             InstructionDecoded::Add { rd, rs1, rs2 } => {
                 trace!("ADD: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
                 trace!("rs1 = {rs1}, rs2 = {rs2}");
-                self.xregs[rd as usize] = (rs1 + rs2) as XRegisterSize;
+
+                self.xregs[rd as usize] = rs1.wrapping_add(rs2) as XRegisterSize;
             }
             InstructionDecoded::Addi { rd, rs1, imm } => {
                 trace!("ADDI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                self.xregs[rd as usize] = rs1.wrapping_add(imm as i32) as XRegisterSize;
+                let (rs1, imm) = (self.xregs[rs1 as usize] as i32, imm as i32);
+                self.xregs[rd as usize] = rs1.wrapping_add(imm) as XRegisterSize;
             }
             InstructionDecoded::Sub { rd, rs1, rs2 } => {
                 trace!("SUB: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
                 self.xregs[rd as usize] = rs1.wrapping_sub(rs2) as XRegisterSize;
             }
             InstructionDecoded::And { rd, rs1, rs2 } => {
                 trace!("AND: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 & rs2) as u32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
+                self.xregs[rd as usize] = rs1 & rs2;
             }
             InstructionDecoded::Andi { rd, rs1, imm } => {
                 trace!("ANDI: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let rs1 = self.xregs[rs1 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 & imm as i32) as u32;
+                self.xregs[rd as usize] = (rs1 & (imm as i32)) as u32;
             }
             InstructionDecoded::Or { rd, rs1, rs2 } => {
                 trace!("OR: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -749,48 +834,52 @@ impl Executor {
                 trace!("SLL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize];
                 let rs2 = self.xregs[rs2 as usize];
-                self.xregs[rd as usize] = rs1 << rs2;
+                self.xregs[rd as usize] = rs1.wrapping_shl(rs2);
             }
             InstructionDecoded::Slli { rd, rs1, imm } => {
                 trace!("SLLI: rd: {rd}, rs1: {rs1}, imm: {}", imm as i32);
 
-                let rs1 = self.xregs[rs1 as usize];
+                let rs1 = self.xregs[rs1 as usize] as i32;
 
-                self.xregs[rd as usize] = rs1 << imm;
+                self.xregs[rd as usize] = rs1.wrapping_shl(imm) as u32;
             }
             InstructionDecoded::Srl { rd, rs1, rs2 } => {
                 trace!("SRL: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 >> rs2) as u32;
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
+                self.xregs[rd as usize] = rs1.wrapping_shr(rs2);
             }
             InstructionDecoded::Srli { rd, rs1, imm } => {
                 trace!("SRLI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
-                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs1 = self.xregs[rs1 as usize];
 
-                self.xregs[rd as usize] = (rs1 >> imm) as u32;
+                self.xregs[rd as usize] = rs1 >> (imm as i32);
             }
             InstructionDecoded::Sra { rd, rs1, rs2 } => {
                 trace!("SRA: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
                 let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = (rs1 >> rs2) as u32;
+                let rs2 = self.xregs[rs2 as usize];
+
+                self.xregs[rd as usize] = rs1.wrapping_shr(rs2) as u32;
             }
             InstructionDecoded::Srai { rd, rs1, imm } => {
                 trace!("SRAI: rd: {rd}, rs1: {rs1}, imm: {imm}");
 
                 let rs1 = self.xregs[rs1 as usize] as i32;
 
-                self.xregs[rd as usize] = (rs1 >> imm as i32) as u32;
+                // sign extend the imm
+                self.xregs[rd as usize] = rs1.wrapping_shr(imm) as u32;
             }
             InstructionDecoded::Lui { rd, imm } => {
                 trace!("LUI: rd: {rd}, imm: {}", imm << 12);
+
                 self.xregs[rd as usize] = imm << 12;
             }
             InstructionDecoded::AuiPc { rd, imm } => {
                 trace!("AUIPC: rd: {rd}, imm: {imm}");
-                self.xregs[rd as usize] = cpu.get_pc().wrapping_add(imm << 12).wrapping_sub(4) as XRegisterSize;
+                self.xregs[rd as usize] =
+                    cpu.get_pc().wrapping_add(imm << 12).wrapping_sub(4) as XRegisterSize;
             }
             InstructionDecoded::Jal { rd, imm } => {
                 trace!("JAL: rd: {rd}, imm: {imm}");
@@ -816,7 +905,7 @@ impl Executor {
                 trace!("rs1 = {rs1}, rs2 = {rs2}");
                 if rs1 == rs2 {
                     let (pc, imm) = (cpu.get_pc() as i32, imm as i32);
-                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as u32;
                     trace!("Branching to {:#X}", npc);
                     cpu.set_pc(npc);
                 }
@@ -826,9 +915,10 @@ impl Executor {
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
                 trace!("rs1 = {rs1}, rs2 = {rs2}");
+                // if(rs1 != rs2) PC += imm
                 if rs1 != rs2 {
-                    let (pc, imm) = (cpu.get_pc() as i32, imm as i32);
-                    let npc = pc.wrapping_add(imm).wrapping_sub(4) as XRegisterSize;
+                    let (pc, imm) = (cpu.get_pc(), imm);
+                    let npc = pc.wrapping_add(imm).wrapping_sub(4);
                     trace!("Branching to {:#X}", npc);
                     cpu.set_pc(npc);
                 }
@@ -889,8 +979,9 @@ impl Executor {
                     self.xregs[rs1 as usize]
                 );
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-                trace!("Reading from address: {:#X}", addr);
+                debug!("Reading from address: {:#X}", addr);
                 let value = cpu.read(addr, Sizes::Byte, AccessType::Readable)?;
+                debug!("Read value: {0:}[{0:#X}]", value);
                 self.xregs[rd as usize] = value;
             }
             InstructionDecoded::Lh { rd, rs1, imm } => {
@@ -930,9 +1021,9 @@ impl Executor {
 
                 trace!("Reading from address: {:#X}", addr);
 
-                // the read value must be zero-extended to 32 bits
-                let value = cpu.read(addr, Sizes::Byte, AccessType::Readable)?;
-                self.xregs[rd as usize] = zero_extend(value);
+                let value = cpu.read(addr, Sizes::HalfWord, AccessType::Readable)?;
+                let value = value.get_bits(8, 0);
+                self.xregs[rd as usize] = value;
             }
             InstructionDecoded::Lhu { rd, rs1, imm } => {
                 trace!("LHU: rd: {rd}, rs1: {rs1}, imm: {imm}");
@@ -946,25 +1037,11 @@ impl Executor {
 
                 trace!("Reading from address: {:#X}", addr);
 
-                // the read value must be zero-extended to 32 bits
-                let value = cpu.read(addr, Sizes::HalfWord, AccessType::Readable)?;
+                let value = cpu.read(addr, Sizes::Word, AccessType::Readable)?;
+                let value = value.get_bits(16, 0);
                 self.xregs[rd as usize] = value;
             }
-            InstructionDecoded::Lwu { rd, rs1, imm } => {
-                trace!("LWU: rd: {rd}, rs1: {rs1}, imm: {imm}");
-                trace!(
-                    "value of rd = {}, value of rs1 = {}",
-                    self.xregs[rd as usize],
-                    self.xregs[rs1 as usize]
-                );
-
-                let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
-
-                trace!("Reading from address: {:#X}", addr);
-
-                let value = cpu.read(addr, Sizes::Word, AccessType::Readable)?;
-                self.xregs[rd as usize] = zero_extend(value);
-            }
+            InstructionDecoded::Lwu { .. } => todo!(),
             InstructionDecoded::Sb { rs1, rs2, imm } => {
                 trace!("SB: rs1: {rs1}, rs2: {rs2}, imm: {imm}");
                 trace!(
@@ -974,7 +1051,7 @@ impl Executor {
                 );
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
                 trace!("Writing to address: {:#X}", addr);
-                let value = self.xregs[rs2 as usize] as u8 as u32;
+                let value = self.xregs[rs2 as usize];
                 trace!("Writing value: {:#X}", value);
                 cpu.write(addr, value, Sizes::Byte, AccessType::Writable)?;
             }
@@ -1004,6 +1081,8 @@ impl Executor {
                 trace!("Writing value: {:#X}", value);
                 cpu.write(addr, value, Sizes::Word, AccessType::Writable)?;
             }
+
+            //
             InstructionDecoded::Fld { rd, rs1, imm } => {
                 trace!("FLD: rd: {rd}, rs1: {rs1}, imm: {imm}");
                 let addr = (self.xregs[rs1 as usize] as i32).wrapping_add(imm as i32) as u32;
@@ -1016,107 +1095,173 @@ impl Executor {
                 let value = self.fregs[rs2 as usize] as u32;
                 cpu.write(addr, value, Sizes::Word, AccessType::Writable)?;
             }
-            InstructionDecoded::ECall => todo!(),
+
+            InstructionDecoded::ECall => {
+                trace!("ECALL");
+
+                // Makes a request of the execution environment by raising an
+                // environment call exception.
+                match cpu.get_privilege() {
+                    Privilege::User => bail!(Exception::EnvironmentCallFromUMode),
+                    Privilege::Supervisor => bail!(Exception::EnvironmentCallFromSMode),
+                    Privilege::Machine => bail!(Exception::EnvironmentCallFromMMode),
+                }
+            }
             InstructionDecoded::EBreak => {
                 trace!("EBREAK");
-                return Err(Exception::Breakpoint);
+                bail!(Exception::Breakpoint);
             }
-            InstructionDecoded::SRet => todo!(),
+            // Return from traps in S-mode, and SRET copies SPIE into SIE, then sets SPIE.
+            InstructionDecoded::SRet => {
+                trace!("SRet");
+
+                let sepc = cpu.read_csr(SEPC);
+                cpu.set_pc(sepc);
+
+                let status = cpu.read_csr(SSTATUS);
+                let spie = status.get_bit(5);
+                let spp = status.get_bit(8);
+                let npriv = match spp {
+                    // U mode
+                    0 => Privilege::User,
+                    // S mode
+                    1 => Privilege::Supervisor,
+                    _ => unreachable!(), // how?
+                };
+
+                let mprv = match npriv {
+                    Privilege::Machine => status.get_bit(17),
+                    _ => 0,
+                };
+
+                // Override SIE[1] with SPIE[5], set SPIE[5] to 1, set SPP[8] to 0,
+                // and override MPRV[17]
+                cpu.write_csr(
+                    SSTATUS,
+                    status
+                        .set_bits(spie, 1, 5)
+                        .set_bit(5)
+                        .clear_bit(8)
+                        .set_bits(mprv, 1, 17),
+                );
+
+                cpu.set_privilege(npriv);
+            }
+            // Return from traps in M-mode, MRET copies MPIE into MIE, then sets MPIE.
             InstructionDecoded::MRet => {
-				trace!("MRet");
-				let mepc = cpu.read_csr(MEPC);
-				cpu.set_pc(mepc);
-				let status = cpu.read_csr(MSTATUS);
-				let mpie = (status >> 7) & 1;
-				let mpp = (status >> 11) & 0x3;
-				let p = match mpp {
-					0 => Privilege::User,
-					1 => Privilege::Supervisor,
-					3 => Privilege::Machine,
-					_ => panic!("Unknown privilege uncoding")
-				};
-				let mprv = match p {
-					Privilege::Machine => (status >> 17) & 1,
-					_ => 0
-				};
-				// Override MIE[3] with MPIE[7], set MPIE[7] to 1, set MPP[12:11] to 0
-				// and override MPRV[17]
-				let new_status = (status & !0x21888) | (mprv << 17) | (mpie << 3) | (1 << 7);
-				cpu.write_csr(MSTATUS, new_status);
-				cpu.set_privilege(p);
-			}
+                trace!("MRet");
+                // An MRET or SRET instruction is used to return from a trap in M-mode or S-mode respectively. When
+                // executing an xRET instruction, supposing xPP holds the value y, xIE is set to xPIE; the privilege mode is
+                // changed to y; xPIE is set to 1; and xPP is set to the least-privileged supported mode (U if U-mode is
+                // implemented, else M). If y≠M, xRET also sets MPRV=0.
+
+                // Set the pc to MEPC
+                let mepc = cpu.read_csr(MEPC);
+                cpu.set_pc(mepc);
+
+                // copy MPIE into MIE
+                let mut mstatus = cpu.read_csr(MSTATUS);
+
+                // set bit 7 to the value of bit 3
+                mstatus = mstatus.set_bits(mstatus.get_bit(7), 1, 7).set_bit(7); // set MPIE to 1
+
+                // set mpp to the least-privileged supported mode (U if U-mode is implemented, else M)
+                let mpp = mstatus.get_bits(2, 11);
+
+                let npriv = match mpp {
+                    // U mode
+                    0 => Privilege::User,
+                    // S mode
+                    1 => Privilege::Supervisor,
+                    // M mode
+                    3 => Privilege::Machine,
+                    // error
+                    _ => panic!("Invalid privilege level"),
+                };
+
+                // supposing MPP holds the value y, MIE is set to xPIE; the privilege mode is
+                // changed to y; MPIE is set to 1; and MPP is set to the least-privileged supported mode (U if U-mode is
+                // implemented, else M). If y ≠ M mode, MRET also sets MPRV=0.
+                if !matches!(npriv, Privilege::Machine) {
+                    // set mprv to 0
+                    mstatus = mstatus.clear_bit(17);
+                }
+
+                cpu.write_csr(MSTATUS, mstatus);
+
+                cpu.set_privilege(npriv);
+            }
             InstructionDecoded::SFenceVma => {
                 trace!("SFENCE.VMA");
                 // do nothing
             }
-            InstructionDecoded::CsrRw { rd, rs1, imm } => if rd == 0 {
-				trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				// The CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the CSRs and integer registers.
-				// CSRRW reads the old value of the CSR, zero-extends the value to XLEN bits, then writes it to integer register rd.
-				// The initial value in rs1 is written to the CSR.
-				// If rd=x0, then the instruction shall not read the CSR and
-				// shall not cause any of the side effects that might occur on a CSR read.
-				let imm = imm as CsrAddress;
-				let data = cpu.read_csr(imm);
-				let tmp = self.xregs[rs1 as usize];
-				self.xregs[rd as usize] = data;
-				cpu.write_csr(imm, tmp);
-			} else {
-				info!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm:#X}");
-				warn!("CSRRW: rd is zero, ignoring");
-			}
+            InstructionDecoded::CsrRw { rd, rs1, imm } => {
+                trace!("CSRRW: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                // The CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the CSRs and integer registers.
+                // CSRRW reads the old value of the CSR, zero-extends the value to XLEN bits, then writes it to integer register rd.
+                // The initial value in rs1 is written to the CSR.
+                // If rd=x0, then the instruction shall not read the CSR and
+                // shall not cause any of the side effects that might occur on a CSR read.
+                let imm = imm as CsrAddress;
+                let data = if rd != 0 { cpu.read_csr(imm) } else { 0 };
+                let tmp = self.xregs[rs1 as usize];
+                self.xregs[rd as usize] = data;
+                cpu.write_csr(imm, tmp);
+            }
             InstructionDecoded::CsrRs { rd, rs1, imm } => {
-				trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				// The CSRRS (Atomic Read and Set Bits in CSR) instruction reads the value of the CSR,
-				let imm = imm as CsrAddress;
-				let old_value = cpu.read_csr(imm);
-				// The initial value in integer register rs1 is treated as a bit mask that specifies bit positions to be set in the CSR.
-				let mask = self.xregs[rs1 as usize];
-				// Any bit that is high in rs1 will cause the corresponding bit to be set in the CSR, if that CSR bit is writable.
-				let new_value = old_value | mask;
-				// Other bits in the CSR are not explicitly written.
-				cpu.write_csr(imm, new_value);
-				// zero-extends the value to XLEN bits, and writes it to integer register rd.
-				self.xregs[rd as usize] = old_value;
-			}
-            InstructionDecoded::CsrRc { rd, rs1, imm } => {
-				trace!("CSRRC: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				todo!()
-			}
-            InstructionDecoded::CsrRwi { rd, rs1, imm } => {
-				trace!("CSRRWI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				todo!()
-			}
-            InstructionDecoded::CsrRsi { rd, rs1, imm } => {
-				trace!("CSRRSI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				todo!()
-			}
-            InstructionDecoded::CsrRci { rd, rs1, imm } => {
-				trace!("CSRRCI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				todo!()
-			}
+                trace!("CSRRS: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                // The CSRRS (Atomic Read and Set Bits in CSR) instruction reads the value of the CSR,
+                let imm = imm as CsrAddress;
+                let old_value = cpu.read_csr(imm);
+                // The initial value in integer register rs1 is treated as a bit mask that specifies bit positions to be set in the CSR.
+                let mask = self.xregs[rs1 as usize];
+                // Any bit that is high in rs1 will cause the corresponding bit to be set in the CSR, if that CSR bit is writable.
+                let new_value = old_value | mask;
+                // Other bits in the CSR are not explicitly written.
+                if rs1 != 0 {
+                    // dont write to a csr if rs1 is 0
+                    cpu.write_csr(imm, new_value);
+                }
+                // zero-extends the value to XLEN bits, and writes it to integer register rd.
+                self.xregs[rd as usize] = old_value;
+            }
+            InstructionDecoded::CsrRc { .. } => todo!(),
+            InstructionDecoded::CsrRwi { rd, rs1: uimm, imm } => {
+                trace!("CSRRWI: rd: {rd}, uimm: {uimm}, imm: {imm}");
+                // The CSRRWI (Atomic Read/Write Immediate CSR) instruction atomically swaps values in the CSRs and integer registers.
+                // CSRRWI reads the old value of the CSR, zero-extends the value to XLEN bits, then writes it to integer register rd.
+                // The immediate value is written to the CSR.
+                // If rd=x0, then the instruction shall not read the CSR and
+                // shall not cause any of the side effects that might occur on a CSR read.
+                let imm = imm as CsrAddress;
+                let data = if rd != 0 { cpu.read_csr(imm) } else { 0 };
+                self.xregs[rd as usize] = data;
+                cpu.write_csr(imm, uimm);
+            }
+            InstructionDecoded::CsrRsi { .. } => todo!(),
+            InstructionDecoded::CsrRci { .. } => todo!(),
             InstructionDecoded::Slt { rd, rs1, rs2 } => {
-				trace!("SLT: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-				let rs1 = self.xregs[rs1 as usize] as i32;
-				let rs2 = self.xregs[rs2 as usize] as i32;
-				self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
-			}
+                trace!("SLT: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                let rs2 = self.xregs[rs2 as usize] as i32;
+                self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
+            }
             InstructionDecoded::Slti { rd, rs1, imm } => {
-				trace!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				let rs1 = self.xregs[rs1 as usize] as i32;
-				self.xregs[rd as usize] = if rs1 < imm as i32 { 1 } else { 0 };
-			}
+                trace!("SLTI: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.xregs[rs1 as usize] as i32;
+                self.xregs[rd as usize] = if rs1 < imm as i32 { 1 } else { 0 };
+            }
             InstructionDecoded::Sltiu { rd, rs1, imm } => {
-				trace!("SLTIU: rd: {rd}, rs1: {rs1}, imm: {imm}");
-				let rs1 = self.xregs[rs1 as usize];
-				self.xregs[rd as usize] = if rs1 < imm { 1 } else { 0 };
-			}
+                trace!("SLTIU: rd: {rd}, rs1: {rs1}, imm: {imm}");
+                let rs1 = self.xregs[rs1 as usize];
+                self.xregs[rd as usize] = if rs1 < imm { 1 } else { 0 };
+            }
             InstructionDecoded::Sltu { rd, rs1, rs2 } => {
-				trace!("SLTU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
-				let rs1 = self.xregs[rs1 as usize];
-				let rs2 = self.xregs[rs2 as usize];
-				self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
-			}
+                trace!("SLTU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
+                self.xregs[rd as usize] = if rs1 < rs2 { 1 } else { 0 };
+            }
             // FENCE and FENCE.I are used to order device I/O and memory accesses which we don't need to implement
             // so we just treat them as no-ops
             InstructionDecoded::Fence { .. } => {
@@ -1145,16 +1290,16 @@ impl Executor {
             InstructionDecoded::FsgnjxS { .. } => todo!(),
             InstructionDecoded::FminS { .. } => todo!(),
             InstructionDecoded::FmaxS { .. } => todo!(),
-            InstructionDecoded::FcvtSW { ..  } => todo!(),
+            InstructionDecoded::FcvtSW { .. } => todo!(),
             InstructionDecoded::FcvtSWU { .. } => todo!(),
             InstructionDecoded::FcvtWS { .. } => todo!(),
             InstructionDecoded::FcvtWUS { .. } => todo!(),
             InstructionDecoded::FmvXW { .. } => todo!(),
             InstructionDecoded::FmvWX { .. } => todo!(),
             InstructionDecoded::FeqS { .. } => todo!(),
-            InstructionDecoded::FltS { .. } =>todo!(),
+            InstructionDecoded::FltS { .. } => todo!(),
             InstructionDecoded::FleS { .. } => todo!(),
-			InstructionDecoded::FClassS { .. } => todo!(),
+            InstructionDecoded::FClassS { .. } => todo!(),
 
             // RV32M
             InstructionDecoded::Mul { rd, rs1, rs2 } => {
@@ -1177,10 +1322,11 @@ impl Executor {
                     self.xregs[rs1 as usize],
                     self.xregs[rs2 as usize]
                 );
+
                 // multiply the two 32-bit signed integers and return the upper 32 bits of the result
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = ((rs1 as i64 * rs2 as i64) >> 32) as XRegisterSize;
+                let rs1 = self.xregs[rs1 as usize] as i32 as i64;
+                let rs2 = self.xregs[rs2 as usize] as i32 as i64;
+                self.xregs[rd as usize] = ((rs1 * rs2) >> 32) as u32;
             }
             InstructionDecoded::Mulsu { .. } => todo!(),
             InstructionDecoded::Mulu { rd, rs1, rs2 } => {
@@ -1191,9 +1337,11 @@ impl Executor {
                     self.xregs[rs1 as usize],
                     self.xregs[rs2 as usize]
                 );
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = zero_extend(rs1.wrapping_mul(rs2) as XRegisterSize);
+                let rs1 = self.xregs[rs1 as usize] as u64;
+                let rs2 = self.xregs[rs2 as usize] as u64;
+
+                // multiply the two 32-bit unsigned integers and return the upper 32 bits of the result
+                self.xregs[rd as usize] = ((rs1 * rs2) >> 32) as u32;
             }
             InstructionDecoded::Div { rd, rs1, rs2 } => {
                 trace!("DIV: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1205,7 +1353,12 @@ impl Executor {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = rs1.wrapping_div(rs2) as XRegisterSize;
+                // if rs2 == 0, set rd to 0xFFFFFFFF
+                if rs2 == 0 {
+                    self.xregs[rd as usize] = 0xFFFFFFFF;
+                } else {
+                    self.xregs[rd as usize] = rs1.wrapping_div(rs2) as u32;
+                }
             }
             InstructionDecoded::Divu { rd, rs1, rs2 } => {
                 trace!("DIVU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1215,9 +1368,15 @@ impl Executor {
                     self.xregs[rs1 as usize],
                     self.xregs[rs2 as usize]
                 );
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = zero_extend(rs1.wrapping_div(rs2) as XRegisterSize);
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
+
+                // if rs2 == 0, set rd to 0xFFFFFFFF
+                if rs2 == 0 {
+                    self.xregs[rd as usize] = 0xFFFFFFFF;
+                } else {
+                    self.xregs[rd as usize] = rs1.wrapping_div(rs2);
+                }
             }
             InstructionDecoded::Rem { rd, rs1, rs2 } => {
                 trace!("REM: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1229,7 +1388,13 @@ impl Executor {
                 );
                 let rs1 = self.xregs[rs1 as usize] as i32;
                 let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = rs1.wrapping_rem(rs2) as XRegisterSize;
+
+                // if rs2 == 0, set rd to 0xFFFFFFFF
+                if rs2 == 0 {
+                    self.xregs[rd as usize] = 0xFFFFFFFF;
+                } else {
+                    self.xregs[rd as usize] = rs1.wrapping_rem(rs2) as u32;
+                }
             }
             InstructionDecoded::Remu { rd, rs1, rs2 } => {
                 trace!("REMU: rd: {rd}, rs1: {rs1}, rs2: {rs2}");
@@ -1239,24 +1404,19 @@ impl Executor {
                     self.xregs[rs1 as usize],
                     self.xregs[rs2 as usize]
                 );
-                let rs1 = self.xregs[rs1 as usize] as i32;
-                let rs2 = self.xregs[rs2 as usize] as i32;
-                self.xregs[rd as usize] = zero_extend(rs1.wrapping_rem(rs2) as XRegisterSize);
+                let rs1 = self.xregs[rs1 as usize];
+                let rs2 = self.xregs[rs2 as usize];
+
+                // if rs2 == 0, set rd to 0xFFFFFFFF
+                if rs2 == 0 {
+                    self.xregs[rd as usize] = 0xFFFFFFFF;
+                } else {
+                    self.xregs[rd as usize] = rs1.wrapping_rem(rs2);
+                }
             }
 
             // RV32A
-			InstructionDecoded::AmoswapW { rd, rs1, rs2, aq, rl } => {
-				trace!("AMOSWAP.W: rd: {rd}, rs1: {rs1}, rs2: {rs2}, aq: {aq}, rl: {rl}");
-				// Description
-				// atomically load a 32-bit signed data value from the address in rs1, place the value into register rd,
-				// swap the loaded value and the original 32-bit signed value in rs2, then store the result back to the address in rs1.
-
-				let addr = self.xregs[rs1 as usize];
-				let value = self.xregs[rs2 as usize];
-				let old_value = cpu.read(addr, Sizes::Word, AccessType::Readable)?;
-				cpu.write(addr, value, Sizes::Word, AccessType::Writable)?;
-				self.xregs[rd as usize] = old_value;
-			}
+            InstructionDecoded::AmoswapW { .. } => todo!(),
             InstructionDecoded::AmoaddW { .. } => todo!(),
             InstructionDecoded::AmoandW { .. } => todo!(),
             InstructionDecoded::AmoorW { .. } => todo!(),
@@ -1287,15 +1447,15 @@ impl Executor {
             InstructionDecoded::FleD { .. } => todo!(),
             InstructionDecoded::FClassD { .. } => todo!(),
 
-			// TODO: figure out where these go
-			InstructionDecoded::FcvtWD { .. } => todo!(),
-			InstructionDecoded::FcvtWUD { .. } => todo!(),
-			InstructionDecoded::FcvtDW { .. } => todo!(),
-			InstructionDecoded::FcvtDWU { .. } => todo!(),
-			InstructionDecoded::FmaddD { .. } => todo!(),
-			InstructionDecoded::FmsubD { .. } => todo!(),
-			InstructionDecoded::FnmaddD { .. } => todo!(),
-			InstructionDecoded::FnmsubD { .. } => todo!(),
+            // TODO: figure out where these go
+            InstructionDecoded::FcvtWD { .. } => todo!(),
+            InstructionDecoded::FcvtWUD { .. } => todo!(),
+            InstructionDecoded::FcvtDW { .. } => todo!(),
+            InstructionDecoded::FcvtDWU { .. } => todo!(),
+            InstructionDecoded::FmaddD { .. } => todo!(),
+            InstructionDecoded::FmsubD { .. } => todo!(),
+            InstructionDecoded::FnmaddD { .. } => todo!(),
+            InstructionDecoded::FnmsubD { .. } => todo!(),
         }
 
         Ok(())
@@ -1325,6 +1485,6 @@ impl Executor {
             );
             info!("{}", line);
         }
-		info!("{:-^80}", "");
+        info!("{:-^80}", "");
     }
 }

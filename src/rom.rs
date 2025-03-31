@@ -1,4 +1,5 @@
 //! The rom module contains the read-only memory structure and implementation to read the memory. ROM includes a device tree blob (DTB) compiled from a device tree source (DTS).
+use anyhow::{bail, Result};
 use log::info;
 
 use crate::bus::{Device, VirtualDevice};
@@ -9,11 +10,9 @@ use crate::trap::Exception;
 pub const POINTER_TO_DTB: u32 = 0x1020;
 
 /// The address which the mask ROM starts.
-pub const MROM_BASE: u32 = 0x1000;
+pub const MROM_BASE: u64 = 0x1000;
 /// the size of the mask ROM
-pub const MROM_SIZE: u32 = 0xf000;
-/// The address which the mask ROM ends.
-// const MROM_END: u32 = MROM_BASE + 0xf000;
+pub const MROM_SIZE: u64 = 0xf000;
 
 const DTS: &str = r#"
 /dts-v1/;
@@ -133,7 +132,7 @@ impl Rom {
         info!("The size of the ROM: {}", rom.len());
 
         let align = 0x1000;
-        rom.resize((rom.len() + align - 1) / align * align, 0);
+        rom.resize((rom.len() - 1).div_ceil(align) * align, 0);
 
         Self::new_with_data(rom)
     }
@@ -148,7 +147,7 @@ impl Rom {
     }
 
     /// Load `size`-bit data from the memory.
-    pub fn read(&self, addr: u32, size: Sizes) -> Result<u32, Exception> {
+    pub fn read(&self, addr: u64, size: Sizes) -> Result<u32> {
         match size {
             Sizes::Byte => Ok(self.read8(addr)),
             Sizes::HalfWord => Ok(self.read16(addr)),
@@ -157,22 +156,22 @@ impl Rom {
     }
 
     /// Store `size`-bit data to the memory. Returns the exception because the ROM is read-only.
-    pub fn write(&self, _addr: u32, _value: u32, _size: u8) -> Result<(), Exception> {
+    pub fn write(&self, _addr: u64, _value: u32, _size: u8) -> Result<(), Exception> {
         Err(Exception::StoreAccessFault)
     }
 
     /// Read a byte from the rom.
-    fn read8(&self, addr: u32) -> u32 {
+    fn read8(&self, addr: u64) -> u32 {
         self.data[addr as usize] as u32
     }
 
     /// Read 2 bytes from the rom.
-    fn read16(&self, addr: u32) -> u32 {
+    fn read16(&self, addr: u64) -> u32 {
         (self.data[addr as usize] as u32) | ((self.data[(addr as usize) + 1] as u32) << 8)
     }
 
     /// Read 4 bytes from the rom.
-    fn read32(&self, addr: u32) -> u32 {
+    fn read32(&self, addr: u64) -> u32 {
         (self.data[addr as usize] as u32)
             | ((self.data[(addr as usize) + 1] as u32) << 8)
             | ((self.data[(addr as usize) + 2] as u32) << 16)
@@ -188,17 +187,12 @@ impl Device for Rom {
         self
     }
 
-    fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+    fn load(&self, addr: u64, size: Sizes) -> Result<MemorySize> {
         self.read(addr, size)
     }
 
-    fn store(
-        &mut self,
-        _addr: MemorySize,
-        _size: Sizes,
-        _value: MemorySize,
-    ) -> Result<(), Exception> {
-        Err(Exception::StoreAccessFault)
+    fn store(&mut self, _addr: u64, _size: Sizes, _value: MemorySize) -> Result<()> {
+		bail!(Exception::StoreAccessFault);
     }
 }
 
