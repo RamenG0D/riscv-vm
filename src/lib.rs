@@ -7,33 +7,83 @@ pub mod registers;
 pub mod rom;
 pub mod trap;
 
+use std::io::IsTerminal;
+
 pub use log;
 
 pub fn init_logging(level: log::LevelFilter) {
-    use colored::{Color, Colorize};
     use fern::{colors::ColoredLevelConfig, Dispatch};
 
-    let colors = ColoredLevelConfig::new()
-        .info(fern::colors::Color::Green)
-        .debug(fern::colors::Color::Cyan)
-        .error(fern::colors::Color::Red);
-    Dispatch::new()
+    // check if our env supports colors
+    let colors = if std::io::stdin().is_terminal() {
+        ColoredLevelConfig::new()
+            .info(fern::colors::Color::Green)
+            .debug(fern::colors::Color::Cyan)
+            .error(fern::colors::Color::Red)
+    } else {
+        ColoredLevelConfig::new()
+    };
+
+    // terminal output
+    let terminal = Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "[{level}][{target}][{time}] {message}",
-                time = chrono::Local::now()
-                    .format("%H:%M:%S")
-                    .to_string()
-                    .color(Color::BrightBlue),
-                target = record.target().color(Color::Magenta),
+                time = chrono::Local::now().format("%H:%M:%S"),
+                target = record.target(),
                 level = colors.color(record.level()),
-                message = message,
             ))
         })
+        .filter(|meta| !matches!(meta.target(), "init" | "execution"))
+        .chain(std::io::stdout());
+
+    // log file output
+    let log_file = fern::log_file("riscv_vm.log").expect("Failed to create log file");
+    let file = Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "[{level}][{target}][{time}] {message}",
+                time = chrono::Local::now().format("%H:%M:%S"),
+                target = record.target(),
+                level = record.level(),
+            ))
+        })
+        .chain(log_file);
+
+    let err = Dispatch::new()
         .level(level)
-        .chain(std::io::stdout())
-        .apply()
-        .unwrap();
+        .chain(terminal)
+        .chain(file)
+        .apply();
+
+    match err {
+        Ok(_) => {
+            log::info!(target: "init", "Logging initialized with level: {level}");
+            // command to get distribution info
+            let mut dist = std::process::Command::new("uname");
+            let output = dist
+                .arg("-o")
+                .arg("-r")
+                .arg("-s")
+                .output()
+                .expect("Failed to get distribution info");
+            let mut output = output.stdout.iter().map(|x| *x as char).collect::<String>();
+            // remove any newlines
+            output.retain(|c| c != '\n' && c != '\r');
+
+            log::info!(target: "init", "Distribution: {}", output);
+            log::info!(target: "init", "Arch: {}", std::env::consts::ARCH);
+
+            // log::info!("Build: {}", std::env!("CARGO_BUILD_TARGET"));
+            log::info!(target: "init", "Commit: {}", option_env!("GIT_COMMIT").unwrap_or("None"));
+            log::info!(target: "init", "Branch: {}", option_env!("GIT_BRANCH").unwrap_or("None"));
+            log::info!(target: "init", "Tag: {}", option_env!("GIT_TAG").unwrap_or("None"));
+            log::info!(target: "init", "Rust version: {}", env!("RUST_VERSION"));
+            log::info!(target: "init", "Version: {}", env!("CARGO_PKG_VERSION"));
+            log::info!(target: "init", "Repository: {}", env!("CARGO_PKG_REPOSITORY"));
+        }
+        Err(e) => eprintln!("Failed to initialize logging: {e}"),
+    }
 }
 
 #[inline]
@@ -48,50 +98,4 @@ pub fn convert_memory(data: &[u8]) -> Vec<u32> {
         program.push(word);
     }
     program
-}
-
-pub fn disassemble(program: &[u32], file: &str) {
-    use riscv_decoder::decoder::*;
-    use std::{fs::File, io::Write};
-
-    let mut file = File::create(file).expect("Failed to create file");
-
-    let mut pc = 0_usize;
-    while pc < program.len() {
-        // debug_assert!(pc % 4 != 0, "Pc must be aligned to 4 bytes {{ PC: {pc:#X} }}");
-        match program.get(pc) {
-            Some(&inst) => {
-                let dinst = try_decode(inst);
-                /*if is_compressed(inst) {
-                    pc += 2; try_decode_compressed(inst)
-                } else {
-                    pc += 4; try_decode(inst)
-                };*/
-                pc += 4;
-                writeln!(
-                    file,
-                    "{:#X}: {}",
-                    pc + memory::dram::DRAM_BASE as usize,
-                    match dinst {
-                        Ok(inst) => format!("{inst}"),
-                        Err(e) => format!("Error => {e} {{ instruction: {inst:#X} }}"),
-                    }
-                )
-                .expect("Failed to write to file");
-            }
-            None => {
-                writeln!(file, "{pc:#010x}: EOF / End of indexs").expect("Failed to write to file");
-                break;
-            }
-        }
-    }
-}
-
-// internal export
-pub mod bit_ops {
-    pub use bit_ops::bitops_u32::*;
-
-    pub fn zero_extend(value: u32) -> u32 {
-        clear_bit(value, 31)
-    }
 }
