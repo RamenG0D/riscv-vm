@@ -1,34 +1,51 @@
 //! The exception module contains all the exception kinds and the function to handle exceptions.
 
-use std::fmt;
-use log::info;
+use bit_ops::BitOps;
 use thiserror::Error;
+use log::info;
 
-use crate::{cpu::Cpu, csr::{MCAUSE, MEPC, MSTATUS, MTVAL}, memory::virtual_memory::MemorySize};
+use crate::{
+    cpu::Cpu,
+    csr::{MCAUSE, MEPC, MSTATUS, MTVAL},
+};
 
 /// All the exception kinds.
-#[derive(Error, PartialEq)]
+#[derive(Error, Debug, PartialEq)]
 pub enum Exception {
     /// With the addition of the C extension, no instructions can raise
     /// instruction-address-misaligned exceptions.
+    #[error("Instruction address misaligned")]
     InstructionAddressMisaligned,
+    #[error("Instruction access fault")]
     InstructionAccessFault,
-    IllegalInstruction(u32),
+    #[error("Illegal instruction at {instruction:#010x}")]
+    IllegalInstruction { instruction: u32 },
+    #[error("Breakpoint")]
     Breakpoint,
+    #[error("Load address misaligned")]
     LoadAddressMisaligned,
+    #[error("Load access fault")]
     LoadAccessFault,
+    #[error("Store address misaligned")]
     StoreAddressMisaligned,
+    #[error("Store access fault")]
     StoreAccessFault,
+    #[error("Environment call from U-mode")]
     EnvironmentCallFromUMode,
+    #[error("Environment call from S-mode")]
     EnvironmentCallFromSMode,
+    #[error("Environment call from M-mode")]
     EnvironmentCallFromMMode,
     // Stores a trap value (the faulting address) for page fault exceptions.
-    InstructionPageFault(u32),
-    LoadPageFault(u32),
-    StorePageFault(u32),
+    #[error("Instruction page fault at {address}")]
+    InstructionPageFault { address: u64 },
+    #[error("Load page fault at {address}")]
+    LoadPageFault { address: u64 },
+    #[error("Store page fault at {address}")]
+    StorePageFault { address: u64 },
 }
 
-impl fmt::Debug for Exception {
+/*impl fmt::Debug for Exception {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Exception::InstructionAddressMisaligned => write!(f, "Instruction address misaligned"),
@@ -42,7 +59,9 @@ impl fmt::Debug for Exception {
             Exception::EnvironmentCallFromUMode => write!(f, "Environment call from U-mode"),
             Exception::EnvironmentCallFromSMode => write!(f, "Environment call from S-mode"),
             Exception::EnvironmentCallFromMMode => write!(f, "Environment call from M-mode"),
-            Exception::InstructionPageFault(val) => write!(f, "InstructionPageFault({:#010x})", val),
+            Exception::InstructionPageFault(val) => {
+                write!(f, "InstructionPageFault({:#010x})", val)
+            }
             Exception::LoadPageFault(val) => write!(f, "LoadPageFault({:#010x})", val),
             Exception::StorePageFault(val) => write!(f, "StorePageFault({:#010x})", val),
         }
@@ -63,12 +82,14 @@ impl fmt::Display for Exception {
             Exception::EnvironmentCallFromUMode => write!(f, "Environment call from U-mode"),
             Exception::EnvironmentCallFromSMode => write!(f, "Environment call from S-mode"),
             Exception::EnvironmentCallFromMMode => write!(f, "Environment call from M-mode"),
-            Exception::InstructionPageFault(val) => write!(f, "Instruction page fault: {:#010x}", val),
+            Exception::InstructionPageFault(val) => {
+                write!(f, "Instruction page fault: {:#010x}", val)
+            }
             Exception::LoadPageFault(val) => write!(f, "Load page fault: {:#010x}", val),
             Exception::StorePageFault(val) => write!(f, "Store page fault: {:#010x}", val),
         }
     }
-}
+}*/
 
 /// All the trap kinds.
 #[derive(Debug)]
@@ -92,7 +113,7 @@ impl Exception {
         match self {
             Exception::InstructionAddressMisaligned => 0,
             Exception::InstructionAccessFault => 1,
-            Exception::IllegalInstruction(_) => 2,
+            Exception::IllegalInstruction { .. } => 2,
             Exception::Breakpoint => 3,
             Exception::LoadAddressMisaligned => 4,
             Exception::LoadAccessFault => 5,
@@ -101,9 +122,9 @@ impl Exception {
             Exception::EnvironmentCallFromUMode => 8,
             Exception::EnvironmentCallFromSMode => 9,
             Exception::EnvironmentCallFromMMode => 11,
-            Exception::InstructionPageFault(_) => 12,
-            Exception::LoadPageFault(_) => 13,
-            Exception::StorePageFault(_) => 15,
+            Exception::InstructionPageFault { .. } => 12,
+            Exception::LoadPageFault { .. }  => 13,
+            Exception::StorePageFault { .. } => 15,
         }
     }
 
@@ -118,9 +139,9 @@ impl Exception {
             | Exception::EnvironmentCallFromSMode
             | Exception::EnvironmentCallFromMMode
             // TODO: why page fault needs this?
-            | Exception::InstructionPageFault(_)
-            | Exception::LoadPageFault(_)
-            | Exception::StorePageFault(_) => pc.wrapping_sub(4),
+            | Exception::InstructionPageFault { .. }
+            | Exception::LoadPageFault { .. }
+            | Exception::StorePageFault { .. } => pc.wrapping_sub(4),
             _ => pc,
         }
     }
@@ -142,57 +163,56 @@ impl Exception {
             | Exception::LoadAccessFault
             | Exception::StoreAddressMisaligned
             | Exception::StoreAccessFault => pc,
-            Exception::InstructionPageFault(val)
-            | Exception::LoadPageFault(val)
-            | Exception::StorePageFault(val) => *val,
-            Exception::IllegalInstruction(val) => *val,
+            Exception::InstructionPageFault { address }
+            | Exception::LoadPageFault { address }
+            | Exception::StorePageFault { address } => *address as u32,
+            Exception::IllegalInstruction { instruction } => *instruction,
             _ => 0,
         }
     }
 
     // Update CSRs and the program counter depending on an exception.
     pub fn take_trap(&self, cpu: &mut impl Cpu) -> Trap {
-		info!("Taking a trap: {:?}", self);
+        info!("Taking a trap: {:?}", self);
 
-		// 3.1.18 Machine Cause Register (mcause)
-		// 4.1.10 Supervisor Cause Register (scause)
-		// "When a trap is taken into M-mode, S-mode, or U-mode, mcause (scause) is written with a
-		// code indicating the event that caused the trap. When a trap is taken into M-mode, the
-		// high bit of mcause is set to 1; when taken into S-mode, the high bit of scause is set to
-		// 0; when taken into U-mode, the high bit of scause is set to 0. The encoding of the
-		// exception codes is the same in all privilege modes."
-		let cause = self.exception_code();
+        // 3.1.18 Machine Cause Register (mcause)
+        // 4.1.10 Supervisor Cause Register (scause)
+        // "When a trap is taken into M-mode, S-mode, or U-mode, mcause (scause) is written with a
+        // code indicating the event that caused the trap. When a trap is taken into M-mode, the
+        // high bit of mcause is set to 1; when taken into S-mode, the high bit of scause is set to
+        // 0; when taken into U-mode, the high bit of scause is set to 0. The encoding of the
+        // exception codes is the same in all privilege modes."
+        let cause = self.exception_code();
 
-		// 3.1.5 Machine Exception Program Counter (mepc)
-		// 4.1.7 Supervisor Exception Program Counter (sepc)
-		// "When a trap is taken, mepc (sepc) is written with the virtual address of the
-		// instruction that encountered the exception."
-		let epc = self.epc(cpu.get_pc());
+        // 3.1.5 Machine Exception Program Counter (mepc)
+        // 4.1.7 Supervisor Exception Program Counter (sepc)
+        // "When a trap is taken, mepc (sepc) is written with the virtual address of the
+        // instruction that encountered the exception."
+        let epc = self.epc(cpu.get_pc());
 
-		// 3.1.17 Machine Trap Value Register (mtval)
-		// 4.1.9 Supervisor Trap Value Register (stval)
-		// "When a hardware breakpoint is triggered, or an address-misaligned, access-fault, or
-		// page-fault exception occurs on an instruction fetch, load, or store, mtval (stval) is
-		// written with the faulting virtual address. On an illegal instruction trap, mtval (stval)
-		// may be written with the first XLEN or ILEN bits of the faulting instruction as described
-		// below. For other traps, mtval (stval) is set to zero, but a future standard may redefine
-		// mtval's (stval's) setting for other traps."
-		let trap_value = self.trap_value(cpu.get_pc());
+        // 3.1.17 Machine Trap Value Register (mtval)
+        // 4.1.9 Supervisor Trap Value Register (stval)
+        // "When a hardware breakpoint is triggered, or an address-misaligned, access-fault, or
+        // page-fault exception occurs on an instruction fetch, load, or store, mtval (stval) is
+        // written with the faulting virtual address. On an illegal instruction trap, mtval (stval)
+        // may be written with the first XLEN or ILEN bits of the faulting instruction as described
+        // below. For other traps, mtval (stval) is set to zero, but a future standard may redefine
+        // mtval's (stval's) setting for other traps."
+        let trap_value = self.trap_value(cpu.get_pc());
 
-		// 3.1.6 Machine Trap Delegation Register (medeleg)
-		// 4.1.8 Supervisor Trap Delegation Register (sedeleg)
-		// "The mtval register is a WARL field that controls whether synchronous exceptions are
-		// reported as exceptions or interrupts. When a bit in medeleg (sedeleg) is set, synchronous
-		// exceptions corresponding to that bit number are reported as exceptions; when a bit is
-		// clear, the corresponding synchronous exceptions are reported as interrupts."
-		let interrupt = false;
+        // 3.1.6 Machine Trap Delegation Register (medeleg)
+        // 4.1.8 Supervisor Trap Delegation Register (sedeleg)
+        // "The mtval register is a WARL field that controls whether synchronous exceptions are
+        // reported as exceptions or interrupts. When a bit in medeleg (sedeleg) is set, synchronous
+        // exceptions corresponding to that bit number are reported as exceptions; when a bit is
+        // clear, the corresponding synchronous exceptions are reported as interrupts."
 
-		cpu.write_csr(MCAUSE, cause);
-		cpu.write_csr(MEPC, epc);
-		cpu.write_csr(MTVAL, trap_value);
-		let mstatus = cpu.read_csr(MSTATUS);
-		cpu.write_csr(MSTATUS, mstatus & !(1 << 3) | (interrupt as MemorySize) << 3);
+        cpu.write_csr(MCAUSE, cause);
+        cpu.write_csr(MEPC, epc & !1);
+        cpu.write_csr(MTVAL, trap_value);
+        let mstatus = cpu.read_csr(MSTATUS);
+        cpu.write_csr(MSTATUS, mstatus.clear_bit(3));
 
-		Trap::Contained
+        Trap::Contained
     }
 }

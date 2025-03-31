@@ -9,14 +9,18 @@ pub type CsrAddress = u16;
 pub type CsrFieldRange = RangeInclusive<u32>;
 
 pub trait Csr {
-	/// Read the val from the CSR.
+    /// Read the val from the CSR.
     fn read(&self, addr: CsrAddress) -> u32;
     /// Write the val to the CSR.
     fn write(&mut self, addr: CsrAddress, val: u32);
 
     /// Read a bit from the CSR.
     fn read_bit(&self, addr: CsrAddress, bit: u32) -> u32 {
-        if self.read(addr).get_bit(bit) != 0 { 1 } else { 0 }
+        if self.read(addr).get_bit(bit) != 0 {
+            1
+        } else {
+            0
+        }
     }
 
     /// Read a arbitrary length of bits from the CSR.
@@ -176,6 +180,9 @@ const MHARTID: CsrAddress = 0xf14;
 // Machine trap setup.
 /// Machine status register.
 pub const MSTATUS: CsrAddress = 0x300;
+/// Machine status register high.
+/// This register is used to store the upper 32 bits of the MSTATUS register.
+pub const MSTATUSH: CsrAddress = 0x310;
 /// ISA and extensions.
 const MISA: CsrAddress = 0x301;
 /// Machine exception delefation register.
@@ -236,6 +243,12 @@ pub struct CpuCsr {
     csrs: [u32; CSR_SIZE],
 }
 
+impl Default for CpuCsr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuCsr {
     /// Create a new `state` object.
     pub fn new() -> Self {
@@ -289,8 +302,8 @@ impl CpuCsr {
         Self { csrs }
     }
 
-	pub fn dump(&self) {
-		const CSR_NAMES: [&str; 16] = [
+    pub fn dump(&self) {
+        const CSR_NAMES: [&str; 16] = [
             "mstatus", "mtvec", "mepc", "mcause", "medeleg", "mideleg", "sstatus", "stvec", "sepc",
             "scause", "sedeleg", "sideleg", "ustatus", "utvec", "uepc", "ucause",
         ];
@@ -299,14 +312,14 @@ impl CpuCsr {
             SIDELEG, USTATUS, UTVEC, UEPC, UCAUSE,
         ];
 
-		info!("{:-^80}", "csr");
+        info!("{:-^80}", "csr");
 
-		for (name, &index) in CSR_NAMES.iter().zip(CSR_INDEXS.iter()) {
-			info!("{:8} = {:#010x}", name, self.read(index));
-		}
+        for (name, &index) in CSR_NAMES.iter().zip(CSR_INDEXS.iter()) {
+            info!("{:8} = {:#010x}", name, self.read(index));
+        }
 
-		info!("{:-^80}", "");
-	}
+        info!("{:-^80}", "");
+    }
 
     /// Increment the value in the TIME register.
     pub fn increment_time(&mut self) {
@@ -315,7 +328,7 @@ impl CpuCsr {
 }
 
 impl Csr for CpuCsr {
-	/// Read the val from the CSR.
+    /// Read the val from the CSR.
     fn read(&self, addr: CsrAddress) -> u32 {
         // 4.1 Supervisor CSRs
         // "The supervisor should only view CSR state that should be visible to a supervisor-level
@@ -364,9 +377,9 @@ impl Csr for CpuCsr {
         }
     }
 
-	fn reset(&mut self) {
-		*self = Self::new();
-	}
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
 }
 
 /// Convert the val implement `RangeBounds` to the `Range` struct.
