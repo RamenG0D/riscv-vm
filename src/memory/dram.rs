@@ -1,9 +1,10 @@
-use crate::{bus::{Device, VirtualDevice}, trap::Exception};
+use anyhow::Result;
 
-use super::virtual_memory::{HeapMemory, MemorySize};
+use crate::bus::{Device, VirtualDevice};
+use super::virtual_memory::HeapMemory;
 
-pub const DRAM_SIZE: MemorySize = 128 * 1024 * 1024; // 1 GiB
-pub const DRAM_BASE: MemorySize = 0x8000_0000;
+pub const DRAM_SIZE: u64 = 128 * 1024 * 1024; // 1 GiB
+pub const DRAM_BASE: u64 = 0x8000_0000;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Sizes {
@@ -19,39 +20,36 @@ pub struct Dram {
 
 impl Dram {
     pub fn new() -> Self {
-        Self { memory: HeapMemory::new() }
+        Self {
+            memory: HeapMemory::new(),
+        }
     }
 
     pub fn new_device() -> VirtualDevice {
         VirtualDevice::new(Box::new(Self::new()), DRAM_BASE, DRAM_SIZE)
     }
 
-	pub fn initialize(&mut self, data: &[u8]) {
-		let mem = self.memory.memory_mut();
-		if data.len() > mem.len() {
-			panic!("Error: data is too large for DRAM");
-		}
-		mem[..data.len()].copy_from_slice(data);
-	}
+    pub fn initialize(&mut self, data: &[u8]) {
+        let mem = self.memory.memory_mut();
+        if data.len() > mem.len() {
+            panic!("Error: data is too large for DRAM");
+        }
+        mem[..data.len()].copy_from_slice(data);
+    }
 
-    pub fn read(&self, address: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+    pub fn read(&self, address: u64, size: Sizes) -> Result<u32> {
         match size {
-            Sizes::Byte => Ok(self.memory.read8(address)? as MemorySize),
-            Sizes::HalfWord => Ok(self.memory.read16(address)? as MemorySize),
-            Sizes::Word => Ok(self.memory.read32(address)? as MemorySize),
+            Sizes::Byte => self.memory.read8(address),
+            Sizes::HalfWord => self.memory.read16(address),
+            Sizes::Word => self.memory.read32(address),
         }
     }
 
-    pub fn write(
-        &mut self,
-        address: MemorySize,
-        value: MemorySize,
-        size: Sizes,
-    ) -> Result<(), Exception> {
+    pub fn write(&mut self, address: u64, value: u32, size: Sizes) -> Result<()> {
         match size {
-            Sizes::Byte => self.memory.set8(address, value),
-            Sizes::HalfWord => self.memory.set16(address, value),
-            Sizes::Word => self.memory.set32(address, value),
+            Sizes::Byte => self.memory.write8(address, value),
+            Sizes::HalfWord => self.memory.write16(address, value),
+            Sizes::Word => self.memory.write32(address, value),
         }
     }
 }
@@ -63,11 +61,11 @@ impl Device for Dram {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
-    fn load(&self, addr: MemorySize, size: Sizes) -> Result<MemorySize, Exception> {
+    fn load(&self, addr: u64, size: Sizes) -> Result<u32> {
         self.read(addr, size)
     }
 
-    fn store(&mut self, addr: MemorySize, size: Sizes, value: MemorySize) -> Result<(), Exception> {
+    fn store(&mut self, addr: u64, size: Sizes, value: u32) -> Result<()> {
         self.write(addr, value, size)
     }
 }
